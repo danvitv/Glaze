@@ -373,7 +373,6 @@ export async function importSTLorebook(json, fileName = 'Imported') {
             id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
             name: json.name || fileName.replace('.json', ''),
             enabled: true,
-<<<<<<< HEAD
             entries: normalizedEntries.map(entry => {
                 const rawKeys = entry.keys || entry.key || [];
                 const rawSecondary = entry.secondary_keys || entry.keysecondary || [];
