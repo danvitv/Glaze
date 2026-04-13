@@ -5,8 +5,9 @@ import { db } from '@/utils/db.js';
 import { SYNC_TOKENS_KEY } from '@/core/states/syncState.js';
 
 const GDRIVE_CLIENT_ID = import.meta.env.VITE_GDRIVE_CLIENT_ID || '';
+const GDRIVE_CLIENT_SECRET = import.meta.env.VITE_GDRIVE_CLIENT_SECRET || '';
 const REDIRECT_URI_NATIVE = 'https://danvitv.github.io/Glaze/oauth/gdrive/redirect.html';
-const REDIRECT_URI_WEB = 'http://localhost:5173/oauth/gdrive';
+const REDIRECT_URI_WEB = 'http://localhost:5173/oauth/gdrive/redirect.html';
 const API_BASE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -57,14 +58,17 @@ async function clearTokens() {
 async function refreshAccessToken(refreshToken) {
     if (!GDRIVE_CLIENT_ID) throw new Error('Google Drive client ID not configured');
 
+    const params = {
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: GDRIVE_CLIENT_ID
+    };
+    if (GDRIVE_CLIENT_SECRET) params.client_secret = GDRIVE_CLIENT_SECRET;
+
     const response = await fetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: refreshToken,
-            client_id: GDRIVE_CLIENT_ID
-        })
+        body: new URLSearchParams(params)
     });
 
     if (!response.ok) {
@@ -194,44 +198,59 @@ function waitForWebOAuth(authUrl, expectedState) {
         const top = window.screenY + (window.outerHeight - height) / 2;
         const win = window.open(authUrl, 'gdrive-auth', `width=${width},height=${height},left=${left},top=${top}`);
 
-        const interval = setInterval(() => {
-            try {
-                if (win.closed) {
-                    clearInterval(interval);
+        let resolved = false;
+
+        const onMessage = (e) => {
+            if (resolved) return;
+            if (e.data?.type === 'gdrive-oauth') {
+                resolved = true;
+                cleanup();
+                const state = e.data.state;
+                if (state !== expectedState) {
+                    console.error('[gdriveAdapter] State mismatch');
                     resolve(null);
                     return;
                 }
-                const url = win.location.href;
-                if (url && (url.includes('code=') || url.includes('error='))) {
-                    clearInterval(interval);
-                    const params = new URL(url).searchParams;
-                    const code = params.get('code');
-                    const state = params.get('state');
-                    win.close();
+                resolve(e.data.code || null);
+            }
+        };
 
-                    if (state !== expectedState) {
-                        console.error('[gdriveAdapter] State mismatch');
-                        resolve(null);
-                        return;
-                    }
-                    resolve(code);
+        const interval = setInterval(() => {
+            if (resolved) return;
+            try {
+                if (win.closed) {
+                    cleanup();
+                    resolve(null);
                 }
-            } catch {}
-        }, 500);
+            } catch {
+                cleanup();
+                resolve(null);
+            }
+        }, 1000);
+
+        const cleanup = () => {
+            clearInterval(interval);
+            window.removeEventListener('message', onMessage);
+        };
+
+        window.addEventListener('message', onMessage);
     });
 }
 
 async function exchangeCodeForToken(code, verifier, redirectUri) {
+    const params = {
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: verifier,
+        client_id: GDRIVE_CLIENT_ID,
+        redirect_uri: redirectUri
+    };
+    if (GDRIVE_CLIENT_SECRET) params.client_secret = GDRIVE_CLIENT_SECRET;
+
     const response = await fetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            grant_type: 'authorization_code',
-            code,
-            code_verifier: verifier,
-            client_id: GDRIVE_CLIENT_ID,
-            redirect_uri: redirectUri
-        })
+        body: new URLSearchParams(params)
     });
 
     if (!response.ok) {
