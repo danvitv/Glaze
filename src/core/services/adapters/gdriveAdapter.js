@@ -5,8 +5,8 @@ import { db } from '@/utils/db.js';
 import { SYNC_TOKENS_KEY } from '@/core/states/syncState.js';
 
 const GDRIVE_CLIENT_ID = import.meta.env.VITE_GDRIVE_CLIENT_ID || '';
-const REDIRECT_URI_NATIVE = 'com.hydall.glaze://oauth/gdrive';
-const REDIRECT_URI_WEB = `${window.location.origin}/oauth/gdrive`;
+const REDIRECT_URI_NATIVE = 'https://danvitv.github.io/Glaze/oauth/gdrive/redirect.html';
+const REDIRECT_URI_WEB = 'http://localhost:5173/oauth/gdrive';
 const API_BASE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -28,6 +28,7 @@ function generateRandomString(length) {
 }
 
 async function sha256(text) {
+    if (!crypto.subtle) return null;
     const encoder = new TextEncoder();
     const data = encoder.encode(text);
     const hash = await crypto.subtle.digest('SHA-256', data);
@@ -133,6 +134,7 @@ export async function connect() {
 
     const verifier = generateRandomString(64);
     const challenge = await sha256(verifier);
+    const usePlain = !challenge;
     const redirectUri = getRedirectUri();
     const state = generateRandomString(16);
 
@@ -144,8 +146,8 @@ export async function connect() {
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', SCOPES);
-    authUrl.searchParams.set('code_challenge', challenge);
-    authUrl.searchParams.set('code_challenge_method', 'S256');
+    authUrl.searchParams.set('code_challenge', usePlain ? verifier : challenge);
+    authUrl.searchParams.set('code_challenge_method', usePlain ? 'plain' : 'S256');
     authUrl.searchParams.set('state', state);
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
@@ -178,6 +180,8 @@ export async function connect() {
         const code = await waitForWebOAuth(authUrl.toString(), state);
         if (code) {
             await exchangeCodeForToken(code, verifier, redirectUri);
+        } else {
+            throw new Error('Authorization cancelled');
         }
     }
 }

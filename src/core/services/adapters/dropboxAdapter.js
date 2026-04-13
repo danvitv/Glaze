@@ -6,7 +6,7 @@ import { SYNC_TOKENS_KEY } from '@/core/states/syncState.js';
 
 const DROPBOX_APP_KEY = import.meta.env.VITE_DROPBOX_APP_KEY || '';
 const REDIRECT_URI_NATIVE = 'com.hydall.glaze://oauth/dropbox';
-const REDIRECT_URI_WEB = `${window.location.origin}/oauth/dropbox`;
+const REDIRECT_URI_WEB = 'http://localhost:5173/oauth/dropbox';
 const API_BASE = 'https://api.dropboxapi.com/2';
 const CONTENT_BASE = 'https://content.dropboxapi.com/2';
 
@@ -21,6 +21,7 @@ function generateRandomString(length) {
 }
 
 async function sha256(text) {
+    if (!crypto.subtle) return null;
     const encoder = new TextEncoder();
     const data = encoder.encode(text);
     const hash = await crypto.subtle.digest('SHA-256', data);
@@ -103,6 +104,7 @@ export async function connect() {
 
     const verifier = generateRandomString(64);
     const challenge = await sha256(verifier);
+    const usePlain = !challenge;
     const redirectUri = getRedirectUri();
     const state = generateRandomString(16);
 
@@ -112,8 +114,8 @@ export async function connect() {
     const authUrl = new URL('https://www.dropbox.com/oauth2/authorize');
     authUrl.searchParams.set('client_id', DROPBOX_APP_KEY);
     authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('code_challenge', challenge);
-    authUrl.searchParams.set('code_challenge_method', 'S256');
+    authUrl.searchParams.set('code_challenge', usePlain ? verifier : challenge);
+    authUrl.searchParams.set('code_challenge_method', usePlain ? 'plain' : 'S256');
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('token_access_type', 'offline');
     authUrl.searchParams.set('state', state);
@@ -146,6 +148,8 @@ export async function connect() {
         const code = await waitForWebOAuth(authUrl.toString(), state);
         if (code) {
             await exchangeCodeForToken(code, verifier, redirectUri);
+        } else {
+            throw new Error('Authorization cancelled');
         }
     }
 }
