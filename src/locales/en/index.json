@@ -736,5 +736,22 @@
     "sync_status_error": "Error",
     "sync_status_conflict": "Conflict detected",
     "sync_last_sync": "Last sync",
-    "sync_status_idle": "Ready"
+    "sync_status_idle": "Ready",
+    "sync_manual": "Manual Sync",
+    "sync_push": "Push",
+    "sync_pull": "Pull",
+    "sync_confirm_pull": "Pull from cloud? Local data that is older will be overwritten.",
+    "sync_push_result": "Pushed",
+    "sync_pull_result": "Pulled",
+    "sync_items": "items",
+    "sync_conflicts": "conflicts",
+    "sync_full_done": "Full sync complete",
+    "sync_conflicts_found": "Conflicts Found",
+    "sync_conflict_desc": "conflict(s) detected. Local versions were kept.",
+    "sync_just_now": "just now",
+    "sync_ago": "ago",
+    "sync_phase_characters": "Characters",
+    "sync_phase_personas": "Personas",
+    "sync_phase_chats": "Chats",
+    "sync_phase_settings": "Settings"
 }

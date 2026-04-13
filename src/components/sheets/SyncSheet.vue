@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import SheetView from '@/components/ui/SheetView.vue';
 import { translations } from '@/utils/i18n.js';
 import { currentLang } from '@/core/config/APPSettings.js';
@@ -10,11 +10,11 @@ import {
     autoSyncEnabled, autoSyncThreshold, isSyncConfigured,
     PROVIDERS, SYNC_STATUS,
     setProvider, clearProvider, setSyncError, setSyncProgress,
-    clearSyncProgress, incrementMessageCounter, resetMessageCounter,
-    saveSettings, accountInfo
+    clearSyncProgress, saveSettings, accountInfo
 } from '@/core/states/syncState.js';
 import * as dropboxAdapter from '@/core/services/adapters/dropboxAdapter.js';
 import { generateSyncKey, hasSyncKey, restoreKeyFromPhrase } from '@/core/services/crypto/keyManager.js';
+import { fullPush, fullPull, fullSync, checkSyncReadiness } from '@/core/services/syncService.js';
 
 const sheet = ref(null);
 defineProps({ zIndex: { type: Number, default: 1005 } });
@@ -29,6 +29,8 @@ const showRestorePhrase = ref(false);
 const restorePhraseInput = ref('');
 const isRestoringKey = ref(false);
 const localSyncStatus = ref('');
+const syncResult = ref(null);
+const isSyncing = ref(false);
 
 const providerLabel = computed(() => {
     if (!syncProvider.value) return '';
@@ -41,17 +43,25 @@ const statusLabel = computed(() => {
     if (syncStatus.value === SYNC_STATUS.CONFLICT) return t('sync_status_conflict') || 'Conflict detected';
     if (lastSyncTime.value) {
         const ago = formatTimeAgo(lastSyncTime.value);
-        return t('sync_last_sync') || `Last sync: ${ago}`;
+        return `${t('sync_last_sync') || 'Last sync'}: ${ago}`;
     }
     return t('sync_status_idle') || 'Ready';
 });
 
+const progressLabel = computed(() => {
+    if (!syncProgress.phase) return '';
+    const phaseKey = `sync_phase_${syncProgress.phase}`;
+    const phase = t(phaseKey) || syncProgress.phase;
+    if (syncProgress.total > 0) return `${phase} (${syncProgress.current}/${syncProgress.total})`;
+    return phase;
+});
+
 function formatTimeAgo(ts) {
     const diff = Math.floor((Date.now() - ts) / 1000);
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
+    if (diff < 60) return t('sync_just_now') || 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ${t('sync_ago') || 'ago'}`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ${t('sync_ago') || 'ago'}`;
+    return `${Math.floor(diff / 86400)}d ${t('sync_ago') || 'ago'}`;
 }
 
 const connectDropbox = async () => {
@@ -61,7 +71,8 @@ const connectDropbox = async () => {
         setProvider(PROVIDERS.DROPBOX);
         const info = await dropboxAdapter.getAccountInfo();
         accountInfo.value = info;
-        localSyncStatus.value = 'connected';
+        const ready = await checkSyncReadiness();
+        localSyncStatus.value = ready.ready ? 'connected' : 'no_key';
     } catch (e) {
         console.error('[SyncSheet] Dropbox connect failed:', e);
         setSyncError(e.message);
@@ -80,6 +91,7 @@ const disconnectProvider = async () => {
         clearProvider();
         accountInfo.value = null;
         localSyncStatus.value = '';
+        syncResult.value = null;
     } catch (e) {
         console.error('[SyncSheet] Disconnect failed:', e);
     } finally {
@@ -100,6 +112,7 @@ const setupEncryption = async () => {
 
 const confirmRecoveryPhrase = () => {
     showRecoveryPhrase.value = false;
+    localSyncStatus.value = 'connected';
 };
 
 const startRestore = () => {
@@ -113,7 +126,7 @@ const doRestore = async () => {
     try {
         await restoreKeyFromPhrase(restorePhraseInput.value.trim());
         showRestorePhrase.value = false;
-        localSyncStatus.value = 'key_restored';
+        localSyncStatus.value = 'connected';
     } catch (e) {
         alert(t('sync_invalid_phrase') || 'Invalid recovery phrase. Check your 12 words and try again.');
     } finally {
@@ -121,8 +134,78 @@ const doRestore = async () => {
     }
 };
 
+const doPush = async () => {
+    isSyncing.value = true;
+    syncResult.value = null;
+    try {
+        const result = await fullPush();
+        syncResult.value = { type: 'push', ...result };
+    } catch (e) {
+        console.error('[SyncSheet] Push failed:', e);
+        showBottomSheet({
+            title: t('title_error') || 'Error',
+            bigInfo: {
+                icon: '<svg viewBox="0 0 24 24" style="fill:currentColor;width:100%;height:100%;color:#ff4444"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+                description: e.message,
+                buttonText: t('btn_ok') || 'OK',
+                onButtonClick: () => closeBottomSheet()
+            }
+        });
+    } finally {
+        isSyncing.value = false;
+    }
+};
+
+const doPull = async () => {
+    if (!confirm(t('sync_confirm_pull') || 'Pull from cloud? Local data that is older will be overwritten.')) return;
+    isSyncing.value = true;
+    syncResult.value = null;
+    try {
+        const result = await fullPull();
+        syncResult.value = { type: 'pull', ...result };
+        if (syncConflicts.value.length > 0) {
+            showBottomSheet({
+                title: t('sync_conflicts_found') || 'Conflicts Found',
+                bigInfo: {
+                    icon: '<svg viewBox="0 0 24 24" style="fill:currentColor;width:100%;height:100%;color:#FF9800"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
+                    description: `${syncConflicts.value.length} ${t('sync_conflict_desc') || 'conflict(s) detected. Local versions were kept.'}`,
+                    buttonText: t('btn_ok') || 'OK',
+                    onButtonClick: () => closeBottomSheet()
+                }
+            });
+        }
+    } catch (e) {
+        console.error('[SyncSheet] Pull failed:', e);
+        showBottomSheet({
+            title: t('title_error') || 'Error',
+            bigInfo: {
+                icon: '<svg viewBox="0 0 24 24" style="fill:currentColor;width:100%;height:100%;color:#ff4444"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+                description: e.message,
+                buttonText: t('btn_ok') || 'OK',
+                onButtonClick: () => closeBottomSheet()
+            }
+        });
+    } finally {
+        isSyncing.value = false;
+    }
+};
+
+const doFullSync = async () => {
+    isSyncing.value = true;
+    syncResult.value = null;
+    try {
+        await fullSync();
+        syncResult.value = { type: 'full' };
+    } catch (e) {
+        console.error('[SyncSheet] Full sync failed:', e);
+    } finally {
+        isSyncing.value = false;
+    }
+};
+
 const open = () => {
     localSyncStatus.value = '';
+    syncResult.value = null;
     sheet.value?.open();
 };
 const close = () => sheet.value?.close();
@@ -147,13 +230,13 @@ onMounted(async () => {
                 <div class="bs-section">
                     <div class="bs-section-title">{{ t('sync_connect_provider') || 'Connect a Cloud Provider' }}</div>
                     
-                    <button class="bs-btn bs-connect-btn dropbox-btn" @click="connectDropbox" :disabled="isConnecting">
-                        <svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor"><path d="M7.5 2L2 6l3.75 3L2 12l5.5 4 3.75-3 3.75 3 5.5-4-4.5-3L20.5 6 15 2l-3.75 3L7.5 2zm3.75 10L7.5 15l3.75 3 3.75-3-3.75-3zM7.5 16l-1.88 1.5L3 19l5.5 4 3.75-3-4.75-4zm9-4l1.88-1.5L21 8l-5.5-4-3.75 3L16.5 8l-1.88 1.5L11 12l5.5 4 3.75-3-4.75-4z"/></svg>
+                    <button class="bs-btn bs-connect-btn" @click="connectDropbox" :disabled="isConnecting">
+                        <svg viewBox="0 0 24 24"><path d="M7.5 2L2 6l3.75 3L2 12l5.5 4 3.75-3 3.75 3 5.5-4-4.5-3L20.5 6 15 2l-3.75 3L7.5 2zm3.75 10L7.5 15l3.75 3 3.75-3-3.75-3zM7.5 16l-1.88 1.5L3 19l5.5 4 3.75-3-4.75-4zm9-4l1.88-1.5L21 8l-5.5-4-3.75 3L16.5 8l-1.88 1.5L11 12l5.5 4 3.75-3-4.75-4z"/></svg>
                         <span v-if="isConnecting">{{ t('sync_connecting') || 'Connecting...' }}</span>
                         <span v-else>Dropbox</span>
                     </button>
 
-                    <div class="bs-hint" v-if="!$options._appKey">
+                    <div class="bs-hint">
                         {{ t('sync_hint_dropbox') || 'Your data will be encrypted before upload. Only you can read it.' }}
                     </div>
                 </div>
@@ -176,10 +259,25 @@ onMounted(async () => {
                         <div class="sync-provider-badge">
                             <svg v-if="syncProvider === 'dropbox'" viewBox="0 0 24 24" style="width:24px;height:24px;fill:currentColor"><path d="M7.5 2L2 6l3.75 3L2 12l5.5 4 3.75-3 3.75 3 5.5-4-4.5-3L20.5 6 15 2l-3.75 3L7.5 2zm3.75 10L7.5 15l3.75 3 3.75-3-3.75-3z"/></svg>
                             <span class="sync-provider-name">{{ providerLabel }}</span>
-                            <span class="sync-status-dot" :class="{ connected: localSyncStatus === 'connected', error: syncStatus === SYNC_STATUS.ERROR }"></span>
+                            <span class="sync-status-dot" :class="{ connected: localSyncStatus === 'connected' && syncStatus !== SYNC_STATUS.ERROR, error: syncStatus === SYNC_STATUS.ERROR, syncing: syncStatus === SYNC_STATUS.SYNCING }"></span>
                         </div>
                         <div class="sync-status-text" v-if="accountInfo">{{ accountInfo.email }}</div>
                         <div class="sync-status-text">{{ statusLabel }}</div>
+                    </div>
+
+                    <!-- Sync result -->
+                    <div v-if="syncResult" class="sync-result-card" :class="syncResult.type">
+                        <span v-if="syncResult.type === 'push'">{{ t('sync_push_result') || 'Pushed' }}: {{ syncResult.pushed }} {{ t('sync_items') || 'items' }}</span>
+                        <span v-else-if="syncResult.type === 'pull'">{{ t('sync_pull_result') || 'Pulled' }}: {{ syncResult.pulled }} {{ t('sync_items') || 'items' }}, {{ syncResult.conflicts.length }} {{ t('sync_conflicts') || 'conflicts' }}</span>
+                        <span v-else>{{ t('sync_full_done') || 'Full sync complete' }}</span>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div v-if="syncStatus === SYNC_STATUS.SYNCING && progressLabel" class="sync-progress">
+                    <div class="sync-progress-label">{{ progressLabel }}</div>
+                    <div class="sync-progress-bar-container">
+                        <div class="sync-progress-bar" :style="{ width: syncProgress.total > 0 ? (syncProgress.current / syncProgress.total * 100) + '%' : '0%' }"></div>
                     </div>
                 </div>
 
@@ -191,6 +289,21 @@ onMounted(async () => {
                         <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
                         <span>{{ t('sync_setup_encryption') || 'Set Up Encryption' }}</span>
                     </button>
+                </div>
+
+                <!-- Push/Pull buttons -->
+                <div v-if="localSyncStatus === 'connected'" class="bs-section">
+                    <div class="bs-section-title">{{ t('sync_manual') || 'Manual Sync' }}</div>
+                    <div class="sync-actions-row">
+                        <button class="bs-btn bs-push-btn" @click="doPush" :disabled="isSyncing || syncStatus === SYNC_STATUS.SYNCING">
+                            <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+                            <span>{{ t('sync_push') || 'Push' }}</span>
+                        </button>
+                        <button class="bs-btn bs-pull-btn" @click="doPull" :disabled="isSyncing || syncStatus === SYNC_STATUS.SYNCING">
+                            <svg viewBox="0 0 24 24"><path d="M11 4H5v6h2V7.41L14.59 15 16 13.59 8.41 6H11V4zm8 12h-6v2h6v-2zm-2-8H11v2h6V8z"/></svg>
+                            <span>{{ t('sync_pull') || 'Pull' }}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Auto-sync settings -->
@@ -344,6 +457,29 @@ onMounted(async () => {
     transform: scale(0.98);
 }
 
+.bs-push-btn {
+    background: rgba(var(--vk-blue-rgb), 0.1);
+    color: var(--vk-blue);
+    flex: 1;
+}
+
+.bs-push-btn:active:not(:disabled) {
+    background: rgba(var(--vk-blue-rgb), 0.2);
+    transform: scale(0.98);
+}
+
+.bs-pull-btn {
+    background: var(--vk-blue);
+    color: white;
+    box-shadow: 0 4px 12px rgba(var(--vk-blue-rgb), 0.3);
+    flex: 1;
+}
+
+.bs-pull-btn:active:not(:disabled) {
+    transform: scale(0.98);
+    box-shadow: 0 2px 6px rgba(var(--vk-blue-rgb), 0.2);
+}
+
 .bs-hint {
     font-size: 13px;
     color: var(--text-gray, #8e8e93);
@@ -386,6 +522,7 @@ onMounted(async () => {
     border-radius: 50%;
     background: var(--text-gray, #8e8e93);
     margin-left: auto;
+    transition: background 0.3s;
 }
 
 .sync-status-dot.connected {
@@ -396,9 +533,63 @@ onMounted(async () => {
     background: #ff3b30;
 }
 
+.sync-status-dot.syncing {
+    background: #FF9800;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 .sync-status-text {
     font-size: 13px;
     color: var(--text-gray, #8e8e93);
+}
+
+.sync-result-card {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(76, 175, 80, 0.1);
+    color: #4CAF50;
+}
+
+.sync-result-card.pull {
+    background: rgba(var(--vk-blue-rgb), 0.1);
+    color: var(--vk-blue);
+}
+
+.sync-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sync-progress-label {
+    font-size: 12px;
+    color: var(--text-gray, #8e8e93);
+}
+
+.sync-progress-bar-container {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.sync-progress-bar {
+    height: 100%;
+    background: var(--vk-blue);
+    border-radius: 2px;
+    transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.sync-actions-row {
+    display: flex;
+    gap: 10px;
 }
 
 .settings-item-checkbox {

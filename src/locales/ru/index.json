@@ -742,5 +742,22 @@
     "sync_status_error": "Ошибка",
     "sync_status_conflict": "Обнаружен конфликт",
     "sync_last_sync": "Последняя синхронизация",
-    "sync_status_idle": "Готово"
+    "sync_status_idle": "Готово",
+    "sync_manual": "Ручная синхронизация",
+    "sync_push": "Отправить",
+    "sync_pull": "Загрузить",
+    "sync_confirm_pull": "Загрузить из облака? Локальные данные старее будут перезаписаны.",
+    "sync_push_result": "Отправлено",
+    "sync_pull_result": "Загружено",
+    "sync_items": "элементов",
+    "sync_conflicts": "конфликтов",
+    "sync_full_done": "Полная синхронизация завершена",
+    "sync_conflicts_found": "Обнаружены конфликты",
+    "sync_conflict_desc": "обнаружено конфликтов. Локальные версии сохранены.",
+    "sync_just_now": "только что",
+    "sync_ago": "назад",
+    "sync_phase_characters": "Персонажи",
+    "sync_phase_personas": "Персоны",
+    "sync_phase_chats": "Чаты",
+    "sync_phase_settings": "Настройки"
 }
