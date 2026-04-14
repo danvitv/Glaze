@@ -41,6 +41,18 @@ function estimateTokens(text) {
     return Math.ceil(cleaned.length / 3.35);
 }
 
+function getLorebookReserve(globalSettings, safeContext) {
+    const mode = globalSettings?.reserveMode || 'tokens';
+    const rawValue = Number(globalSettings?.reserveValue || 0);
+    if (!Number.isFinite(rawValue) || rawValue <= 0) return 0;
+
+    if (mode === 'percent') {
+        return Math.max(0, Math.floor((safeContext * rawValue) / 100));
+    }
+
+    return Math.max(0, Math.floor(rawValue));
+}
+
 function escapeRegex(string) {
     return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
 }
@@ -591,24 +603,59 @@ self.onmessage = async function (e) {
             const safeContext = contextSize - maxTokens;
 
             const staticMessages = messages.filter(m => !m.isHistory);
+            const historyMessages = messages.filter(m => m.isHistory);
+            const loreReserveTokens = getLorebookReserve(payload.globalSettings, safeContext);
+            const breakdown = {
+                safeContext,
+                maxTokens,
+                contextSize,
+                character: 0,
+                preset: 0,
+                summary: 0,
+                authorsNote: 0,
+                lorebook: 0,
+                lorebookReserve: loreReserveTokens,
+                history: 0,
+                fixedBase: 0,
+                fixedTotal: 0,
+                availableForHistory: 0,
+                totalUsed: 0,
+                remaining: 0,
+                historyMessagesTotal: historyMessages.length,
+                historyMessagesIncluded: 0,
+                historyMessagesHiddenByContext: 0
+            };
+
             let staticTokens = 0;
             for (const m of staticMessages) {
-                staticTokens += estimateTokens(m.content);
+                const tokens = estimateTokens(m.content);
+                staticTokens += tokens;
+
+                if (m.isLorebook) breakdown.lorebook += tokens;
+                else if (m.blockName === 'Summary') breakdown.summary += tokens;
+                else if (m.blockName === 'authors_note') breakdown.authorsNote += tokens;
+                else if (m.blockName === 'char_card' || m.blockName === 'Character' || /Character Name:/i.test(m.content || '')) breakdown.character += tokens;
+                else breakdown.preset += tokens;
             }
 
-            let availableForHistory = safeContext - staticTokens;
+            breakdown.fixedBase = breakdown.character + breakdown.preset + breakdown.summary + breakdown.authorsNote;
+            breakdown.fixedTotal = breakdown.fixedBase + breakdown.lorebookReserve;
+
+            let availableForHistory = safeContext - breakdown.fixedTotal;
+            breakdown.availableForHistory = Math.max(0, availableForHistory);
             let finalMessages = [];
             let cutoffIndex = -1;
 
             let cutoffOriginalIndex = -1;
 
-            if (staticTokens >= safeContext) {
+            if (breakdown.fixedTotal >= safeContext) {
                 // Out of context entirely just based on prompt
                 finalMessages = staticMessages;
-                cutoffIndex = payload.history?.length || 0;
+                cutoffIndex = historyMessages.length;
                 cutoffOriginalIndex = Number.MAX_SAFE_INTEGER;
+                breakdown.historyMessagesIncluded = 0;
+                breakdown.historyMessagesHiddenByContext = historyMessages.length;
             } else {
-                const historyMessages = messages.filter(m => m.isHistory);
                 let currentHistoryTokens = 0;
                 let includedCount = 0;
 
@@ -625,6 +672,9 @@ self.onmessage = async function (e) {
                 cutoffIndex = historyMessages.length - includedCount;
                 const cutoffMessage = historyMessages[cutoffIndex];
                 cutoffOriginalIndex = cutoffMessage !== undefined ? cutoffMessage.chatId : -1;
+                breakdown.history = currentHistoryTokens;
+                breakdown.historyMessagesIncluded = includedCount;
+                breakdown.historyMessagesHiddenByContext = historyMessages.length - includedCount;
 
                 const keptHistoryMessages = historyMessages.slice(cutoffIndex);
 
@@ -636,6 +686,9 @@ self.onmessage = async function (e) {
                 }
             }
 
+            breakdown.totalUsed = breakdown.fixedBase + breakdown.lorebookReserve + breakdown.history;
+            breakdown.remaining = Math.max(0, safeContext - breakdown.totalUsed);
+
             self.postMessage({
                 id,
                 success: true,
@@ -645,6 +698,7 @@ self.onmessage = async function (e) {
                     cutoffOriginalIndex,
                     loreEntries,
                     staticTokens,
+                    contextBreakdown: breakdown,
                     needsVarsSave: notifyObj.varsChanged,
                     sessionVars: payload.sessionVars
                 }

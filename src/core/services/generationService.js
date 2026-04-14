@@ -368,13 +368,20 @@ export async function calculateContext({ char, history, authorsNote, summary }) 
             apiConfig
         }));
 
-        const result = await processPromptAsync(payload);
-        return result.cutoffOriginalIndex !== undefined && result.cutoffOriginalIndex !== -1
+        const resolvedCutoff = result.cutoffOriginalIndex !== undefined && result.cutoffOriginalIndex !== -1
             ? result.cutoffOriginalIndex
             : result.cutoffIndex;
+
+        return {
+            cutoffIndex: resolvedCutoff,
+            contextBreakdown: result.contextBreakdown || null
+        };
     } catch (e) {
         console.error("Calculate context worker error", e);
-        return 0;
+        return {
+            cutoffIndex: 0,
+            contextBreakdown: null
+        };
     }
 }
 
