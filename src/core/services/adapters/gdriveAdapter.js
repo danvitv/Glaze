@@ -420,14 +420,30 @@ async function findFolderByName(name, parentId) {
     return data.files?.[0]?.id || null;
 }
 
-async function folderHasContent(folderId) {
-    const query = `'${folderId}' in parents and trashed=false`;
+async function folderHasRealContent(folderId) {
+    const query = `'${folderId}' in parents and trashed=false and name!='manifest.json'`;
     const response = await apiRequest(
         `${API_BASE}/files?q=${encodeURIComponent(query)}&spaces=drive&fields=files(id)&pageSize=1&includeItemsFromAllDrives=true&supportsAllDrives=true`
     );
-    if (!response.ok) return false;
+    if (!response.ok) return true;
     const data = await response.json();
     return (data.files?.length || 0) > 0;
+}
+
+async function folderHasManifest(folderId) {
+    const file = await findFileByName('manifest.json', folderId);
+    return !!file;
+}
+
+async function isOurGlazeFolder(folderId) {
+    return await folderHasManifest(folderId);
+}
+
+async function isSafeToDeleteGlazeFolder(folderId) {
+    const hasManifest = await folderHasManifest(folderId);
+    if (hasManifest) return true;
+    const hasContent = await folderHasRealContent(folderId);
+    return !hasContent;
 }
 
 export function invalidateGlazeFolderCache() {
@@ -560,21 +576,16 @@ async function getGlazeFolderId(invalidate = false) {
     }
     const folders = await findFoldersByName(FOLDER_NAME, null);
     if (folders.length === 0) return null;
-    if (folders.length === 1) {
-        folderIdCache = folders[0].id;
-        return folderIdCache;
-    }
     let bestFolder = null;
     for (const folder of folders) {
-        const manifestFile = await findFileByName('manifest.json', folder.id);
-        if (manifestFile) {
+        if (await isOurGlazeFolder(folder.id)) {
             bestFolder = folder;
             break;
         }
     }
     if (!bestFolder) {
         for (const folder of folders) {
-            if (await folderHasContent(folder.id)) {
+            if (await folderHasRealContent(folder.id)) {
                 bestFolder = folder;
                 break;
             }
@@ -585,13 +596,10 @@ async function getGlazeFolderId(invalidate = false) {
     }
     folderIdCache = bestFolder.id;
     for (const folder of folders) {
-        if (folder.id !== bestFolder.id) {
-            const hasContent = await folderHasContent(folder.id);
-            if (!hasContent) {
-                try {
-                    await apiRequest(`${API_BASE}/files/${folder.id}`, { method: 'DELETE' });
-                } catch {}
-            }
+        if (folder.id !== bestFolder.id && await isSafeToDeleteGlazeFolder(folder.id)) {
+            try {
+                await apiRequest(`${API_BASE}/files/${folder.id}?supportsAllDrives=true`, { method: 'DELETE' });
+            } catch {}
         }
     }
     return folderIdCache;
@@ -701,6 +709,7 @@ async function findFileByName(name, parentId) {
 }
 
 export async function upload(path, data) {
+    assertGlazePath(path);
     const { parentId, fileName } = await resolvePathToParent(path);
     const existingFile = await findFileByName(fileName, parentId);
 
@@ -807,6 +816,7 @@ export async function upload(path, data) {
 }
 
 export async function download(path, _retry = false) {
+    assertGlazePath(path);
     const { parentId, fileName } = await resolvePathToParent(path);
     const file = await findFileByName(fileName, parentId);
 
@@ -835,6 +845,7 @@ export async function download(path, _retry = false) {
 }
 
 export async function listFolder(path) {
+    assertGlazePath(path);
     const parts = path.replace(/^\//, '').split('/').filter(Boolean);
     let parentId = null;
 
@@ -920,8 +931,19 @@ export async function deleteFile(fileOrPath) {
     let resolvedPath = '';
 
     if (typeof fileOrPath === 'object' && fileOrPath?.id) {
-        fileId = fileOrPath.id;
         resolvedPath = fileOrPath?.path_display || fileOrPath?.path || '';
+        assertGlazePath(resolvedPath);
+        if (!resolvedPath) {
+            const glazeId = await getGlazeFolderId();
+            if (!glazeId || !fileOrPath.id) throw new Error('Refusing to delete file without path verification');
+            const meta = await apiRequest(`${API_BASE}/files/${fileOrPath.id}?fields=parents&supportsAllDrives=true`);
+            if (!meta.ok) throw new Error('Refusing to delete file: cannot verify parent');
+            const metaData = await meta.json();
+            if (!metaData.parents?.includes(glazeId)) {
+                throw new Error(`Refusing to delete file outside Glaze folder`);
+            }
+        }
+        fileId = fileOrPath.id;
     } else {
         resolvedPath = typeof fileOrPath === 'string'
             ? fileOrPath
