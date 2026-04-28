@@ -20,7 +20,7 @@ const UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-const SCOPES = 'https://www.googleapis.com/auth/drive';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
 const FOLDER_NAME = 'Glaze';
 let folderIdCache = null;
@@ -480,6 +480,10 @@ export async function pickFolder() {
     const accessToken = await getValidAccessToken();
     if (!accessToken) throw new Error('Not connected to Google Drive');
 
+    if (Capacitor.isNativePlatform()) {
+        return await pickFolderNative(accessToken);
+    }
+
     await loadPickerApi();
 
     return new Promise((resolve, reject) => {
@@ -513,6 +517,75 @@ export async function pickFolder() {
     });
 }
 
+async function pickFolderNative(accessToken) {
+    const appId = GDRIVE_CLIENT_ID?.split('-')[0] || '';
+    const pickerUrl = `${window.location.origin}/oauth/gdrive/picker.html` +
+        `#token=${encodeURIComponent(accessToken)}` +
+        `&appId=${encodeURIComponent(appId)}` +
+        `&nativeScheme=com.hydall.glaze`;
+
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        let listener;
+
+        const cleanup = () => {
+            if (listener) {
+                listener.then(handle => handle.remove()).catch(() => {});
+                listener = null;
+            }
+        };
+
+        const onAppUrlOpen = async (data) => {
+            try {
+                const url = new URL(data.url);
+                if (url.host !== 'picker' || url.pathname !== '/gdrive') return;
+
+                if (resolved) return;
+                resolved = true;
+                cleanup();
+
+                if (url.searchParams.get('cancelled') === '1') {
+                    resolve(null);
+                    return;
+                }
+
+                const folderId = url.searchParams.get('folderId');
+                const folderName = url.searchParams.get('folderName');
+                if (folderId) {
+                    resolve({ id: folderId, name: folderName || '' });
+                } else {
+                    resolve(null);
+                }
+            } catch (e) {
+                if (!resolved) {
+                    resolved = true;
+                    cleanup();
+                    reject(e);
+                }
+            } finally {
+                try { await Browser.close(); } catch {}
+            }
+        };
+
+        listener = App.addListener('appUrlOpen', onAppUrlOpen);
+        Browser.open({ url: pickerUrl }).catch(e => {
+            if (!resolved) {
+                resolved = true;
+                cleanup();
+                reject(e);
+            }
+        });
+
+        setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                cleanup();
+                resolve(null);
+            }
+        }, 120000);
+    });
+}
+
 export { getGlazeFolderId };
 
 export function extractFolderId(input) {
@@ -527,25 +600,9 @@ export function extractFolderId(input) {
 }
 
 export async function verifyFolderId(folderId) {
-    try {
-        const response = await apiRequest(
-            `${API_BASE}/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed&supportsAllDrives=true`
-        );
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error?.message || `Failed to access folder (${response.status})`);
-        }
-        const data = await response.json();
-        if (data.trashed) throw new Error('Folder is in trash');
-        if (data.mimeType !== 'application/vnd.google-apps.folder') throw new Error('Not a folder');
-        folderIdCache = folderId;
-        _folderIdCache.clear();
-        return data;
-    } catch (e) {
-        folderIdCache = null;
-        _folderIdCache.clear();
-        throw e;
-    }
+    folderIdCache = folderId;
+    _folderIdCache.clear();
+    return { id: folderId };
 }
 
 async function getGlazeFolderId(invalidate = false) {

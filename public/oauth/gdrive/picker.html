@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Glaze — Select Folder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: sans-serif; text-align: center; padding-top: 40%; }
+        .error { color: #d32f2f; }
+    </style>
+</head>
+<body>
+    <p id="status">Loading Google Picker...</p>
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script>
+        const params = new URLSearchParams(window.location.hash.substring(1) || window.location.search);
+        const accessToken = params.get('token');
+        const appId = params.get('appId');
+        const nativeScheme = params.get('nativeScheme') || 'com.hydall.glaze';
+
+        if (!accessToken) {
+            document.getElementById('status').textContent = 'Error: No access token provided.';
+            document.getElementById('status').className = 'error';
+        }
+
+        function onPickerLoaded() {
+            const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+                .setSelectFolderEnabled(true)
+                .setMimeTypes('application/vnd.google-apps.folder')
+                .setMode(google.picker.DocsViewMode.LIST);
+
+            const picker = new google.picker.PickerBuilder()
+                .setAppId(appId || '')
+                .setOAuthToken(accessToken)
+                .addView(view)
+                .setTitle('Select Glaze folder')
+                .setCallback(onPickerAction)
+                .build();
+            picker.setVisible(true);
+            document.getElementById('status').textContent = '';
+        }
+
+        function onPickerAction(data) {
+            if (data.action === google.picker.Action.PICKED) {
+                const folder = data.docs[0];
+                const result = JSON.stringify({ id: folder.id, name: folder.name });
+                const redirectUrl = nativeScheme + '://picker/gdrive?folderId=' + encodeURIComponent(folder.id) + '&folderName=' + encodeURIComponent(folder.name);
+                window.location.href = redirectUrl;
+            } else if (data.action === google.picker.Action.CANCEL) {
+                const redirectUrl = nativeScheme + '://picker/gdrive?cancelled=1';
+                window.location.href = redirectUrl;
+            }
+        }
+
+        if (accessToken) {
+            gapi.load('picker', { callback: onPickerLoaded });
+        }
+    </script>
+</body>
+</html>

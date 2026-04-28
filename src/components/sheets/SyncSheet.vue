@@ -536,13 +536,11 @@ onMounted(async () => {
                         <span v-if="isCreatingFolder">{{ t('sync_creating') || 'Creating...' }}</span>
                         <span v-else>{{ t('sync_gdrive_create_folder') || 'Create New Folder' }}</span>
                     </button>
-                    <template v-if="!isNativePlatform">
-                        <button class="bs-btn bs-secondary-btn" @click="selectExistingFolder" :disabled="isCreatingFolder || isPickingFolder">
+                    <button class="bs-btn bs-secondary-btn" @click="selectExistingFolder" :disabled="isCreatingFolder || isPickingFolder">
                             <svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
                             <span v-if="isPickingFolder">{{ t('sync_selecting') || 'Selecting...' }}</span>
                             <span v-else>{{ t('sync_gdrive_select_folder') || 'Select Existing Folder' }}</span>
                         </button>
-                    </template>
                     <div class="bs-section" style="margin-top: 8px;">
                         <div class="bs-section-title" style="font-size: 0.85em;">
                             {{ t('sync_gdrive_link_by_id') || 'Or link by folder ID' }}
