@@ -62,18 +62,14 @@ export function useGdriveFolderPicker() {
         isCreatingFolder.value = true;
         pickerError.value = '';
         try {
-            const verified = await gdriveAdapter.verifyFolderId(folderId);
-            if (!verified) {
-                pickerError.value = 'Folder not found or not accessible. Make sure the folder is shared with your Google account.';
-                return;
-            }
+            await gdriveAdapter.verifyFolderId(folderId);
             await gdriveAdapter.setGlazeFolderId(folderId);
             gdriveFolderId.value = folderId;
             gdriveFolderStatus.value = 'found';
             folderIdInput.value = '';
         } catch (e) {
             console.error('[useGdriveFolderPicker] link failed:', e);
-            pickerError.value = e.message;
+            pickerError.value = e.message || 'Could not access folder. Make sure it exists and is shared with your Google account.';
         } finally {
             isCreatingFolder.value = false;
         }
