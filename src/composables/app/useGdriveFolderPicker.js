@@ -26,9 +26,6 @@ export function useGdriveFolderPicker() {
     }
 
     async function selectExistingFolder() {
-        if (isNativePlatform) {
-            return await linkFolderById();
-        }
         isPickingFolder.value = true;
         pickerError.value = '';
         try {
