@@ -20,7 +20,7 @@ const UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const SCOPES = 'https://www.googleapis.com/auth/drive';
 
 const FOLDER_NAME = 'Glaze';
 let folderIdCache = null;
@@ -515,13 +515,20 @@ export async function verifyFolderId(folderId) {
         const response = await apiRequest(
             `${API_BASE}/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,trashed&supportsAllDrives=true`
         );
-        if (!response.ok) return null;
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error?.message || `Failed to access folder (${response.status})`);
+        }
         const data = await response.json();
-        if (data.trashed) return null;
-        if (data.mimeType !== 'application/vnd.google-apps.folder') return null;
+        if (data.trashed) throw new Error('Folder is in trash');
+        if (data.mimeType !== 'application/vnd.google-apps.folder') throw new Error('Not a folder');
+        folderIdCache = folderId;
+        _folderIdCache.clear();
         return data;
-    } catch {
-        return null;
+    } catch (e) {
+        folderIdCache = null;
+        _folderIdCache.clear();
+        throw e;
     }
 }
 
