@@ -1,4 +1,30 @@
 import { runPreparedChatPrompt } from '@/core/llm/usecases/chatPreparation.js';
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
+
+function copyDiagnosticText(text) {
+    if (Capacitor.isNativePlatform()) {
+        Share.share({ text });
+        return;
+    }
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {
+            fallbackCopyText(text);
+        });
+        return;
+    }
+    fallbackCopyText(text);
+}
+
+function fallbackCopyText(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    document.body.removeChild(ta);
+}
 
 export async function executePreparedChatPrompt({
     preparedRequest,
@@ -62,13 +88,13 @@ export async function executePreparedChatPrompt({
         console.error('Worker error:', e);
         if (e.message?.includes('Prompt building timed out') && e._diagnostic) {
             showBottomSheet({
-                title: t('prompt_timeout_title') || 'Prompt Building Timeout',
+                title: t('prompt_timeout_title') || 'Prompt Timeout',
                 bigInfo: {
                     icon: '<svg viewBox="0 0 24 24" style="fill:currentColor;width:100%;height:100%;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
                     description: e._diagnostic,
                     buttonText: t('btn_copy') || 'Copy',
                     onButtonClick: () => {
-                        try { navigator.clipboard.writeText(e._diagnostic); } catch (__e) {}
+                        copyDiagnosticText(e._diagnostic);
                     }
                 }
             });
