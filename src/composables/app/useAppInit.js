@@ -6,17 +6,16 @@ import { loadPersonas } from '@/core/states/personaState.js';
 import { initLorebookState } from '@/core/states/lorebookState.js';
 import { initPresetState } from '@/core/states/presetState.js';
 import { initSyncState, syncProvider } from '@/core/states/syncState.js';
-import { checkSyncReadiness, fullPull } from '@/core/services/syncService.js';
+import { checkSyncReadiness, fullPull, isDbReady } from '@/core/services/syncService.js';
 import { startTracking } from '@/core/services/timeTracker.js';
 import { initThemeToggle, initHeaderDropdown, initViewportFix } from '@/core/services/ui.js';
 import { initRipple } from '@/core/services/interactionEffects.js';
 import { checkAndRequestNotifications, consumePendingNotificationData } from '@/core/services/notificationService.js';
 import { generateMissingThumbnails } from '@/utils/characterIO.js';
-import { migrateScToGz } from '@/utils/db.js';
+import { migrateScToGz, db } from '@/utils/db.js';
 import { seedDefaultCharacters } from '@/utils/seedDefaultCharacters.js';
 import { isKeyboardOpen, onKeyboardShow, onKeyboardHide } from '@/core/services/keyboardHandler.js';
 import { updateLanguage } from '@/utils/i18n.js';
-import { db } from '@/utils/db.js';
 import { publishAppEvent } from '@/core/events/eventHub.js';
 import { APP_EVENTS } from '@/core/events/eventNames.js';
 
@@ -45,6 +44,7 @@ export function useAppInit({
         }
         const wasHiddenMs = Date.now() - lastVisibilityHidden;
         if (wasHiddenMs < 5000) return;
+        if (!isDbReady.value) return;
 
         const skipPull = localStorage.getItem('gz_skip_sync_pull');
         if (skipPull) {
@@ -123,6 +123,7 @@ export function useAppInit({
 
         updateLanguage();
         isDataLoaded.value = true;
+        isDbReady.value = true;
 
         generateMissingThumbnails();
 
