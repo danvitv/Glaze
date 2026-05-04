@@ -856,6 +856,7 @@ self.onmessage = async function (e) {
             receivedAt: Date.now(),
             sentAt: payload?._sentAt || null,
             tokenizerReadyAt: null,
+            tokenizerTimedOut: false,
             buildStart: null,
             buildEnd: null,
             calcStart: null,
@@ -863,10 +864,18 @@ self.onmessage = async function (e) {
             isIOS,
             workerUa: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'
         };
+        const heartbeatInterval = setInterval(() => {
+            self.postMessage({ id, type: 'heartbeat', ts: Date.now(), phase: diag.buildStart ? 'calculating' : 'tokenizer' });
+        }, 5000);
         try {
             if (tokenizerReady) {
-                await tokenizerReady;
-                diag.tokenizerReadyAt = Date.now();
+                const tokenizerTimeout = new Promise(resolve => { setTimeout(() => resolve('timeout'), 10000); });
+                const result = await Promise.race([tokenizerReady, tokenizerTimeout]);
+                if (result === 'timeout') {
+                    diag.tokenizerTimedOut = true;
+                } else {
+                    diag.tokenizerReadyAt = Date.now();
+                }
             }
 
             diag.buildStart = Date.now();
@@ -977,6 +986,7 @@ self.onmessage = async function (e) {
 
             diag.calcEnd = Date.now();
 
+            clearInterval(heartbeatInterval);
             self.postMessage({
                 id,
                 success: true,
@@ -993,6 +1003,7 @@ self.onmessage = async function (e) {
                 }
             });
         } catch (error) {
+            clearInterval(heartbeatInterval);
             self.postMessage({ id, success: false, error: error.message, _diagnostic: diag });
         }
     }
