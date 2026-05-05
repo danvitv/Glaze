@@ -92,6 +92,8 @@ captures/
 !ARCHITECTURE.md
 !docs/
 !docs/refactoring/
+docs/FLUTTER_MIGRATION_FULL_PLAN.md
+docs/REACT_NATIVE_MIGRATION.md
 /BUGFIX_TODO.md
 /UNTESTED_TASKS.md
 /TESTING_CHECKLIST.md
