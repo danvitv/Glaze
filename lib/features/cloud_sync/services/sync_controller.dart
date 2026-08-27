@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
@@ -8,10 +9,16 @@ import '../../../core/state/character_provider.dart';
 import '../../../core/state/active_studio_preset_provider.dart';
 import '../../../core/state/chat_session_ops_provider.dart';
 import '../../../core/state/lorebook_provider.dart';
+import '../../../core/state/lorebook_embedding_provider.dart';
 import '../../../core/state/shared_prefs_provider.dart';
 import '../../../shared/theme/theme_provider.dart';
 import '../../personas/persona_list_provider.dart';
 import '../../settings/api_list_provider.dart';
+import '../../card_rewrite/card_rewriter_recovery_view_service.dart';
+import '../../chat/chat_provider.dart';
+import '../../chat/chat_session_service.dart';
+import '../../chat/services/collector_view_service.dart';
+import '../../chat/services/reconciler_view_service.dart';
 import '../../chat_history/chat_history_provider.dart';
 import '../sync_provider.dart';
 import '../sync_models.dart';
@@ -341,6 +348,15 @@ class SyncController {
     // updated files from disk immediately (without a full app restart).
     _evictAvatarImageCache();
 
+    // Chat sessions are replaced directly in the database during pull. Drop
+    // both in-memory layers before rebuilding providers so ownership changes
+    // (for example a Card Rewriter variant fork) become visible immediately.
+    ChatSessionService.clearCache();
+    _ref.invalidate(chatProvider, asReload: true);
+    _ref.invalidate(reconcilerViewProvider, asReload: true);
+    _ref.invalidate(collectorViewProvider, asReload: true);
+    _ref.invalidate(cardRewriterRecoveryViewsProvider, asReload: true);
+
     _ref.invalidate(charactersProvider);
     _ref.invalidate(personaListProvider);
     _ref.invalidate(apiListProvider);
@@ -349,6 +365,7 @@ class SyncController {
     _ref.invalidate(chatHistoryProvider);
     _ref.invalidate(activeStudioPresetProvider);
     _ref.invalidate(studioPresetProvider);
+    unawaited(_ref.read(sessionLorebookEmbeddingWorkerProvider).drain());
     _ref.read(themeProvider.notifier).reload();
 
     // Bump the version counter so widgets that watch avatarVersionProvider
