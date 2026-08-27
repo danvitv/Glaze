@@ -38,6 +38,7 @@ void main() {
   late String interactionDispatchJs;
   late String panelHostJs;
   late String htmlSanitizerJs;
+  late String cssDiagnosticsJs;
   late String cssSanitizerJs;
   late String selectionManagerJs;
   late String swipeHandlerJs;
@@ -67,6 +68,7 @@ void main() {
     interactionDispatchJs = _bridgeAsset('interaction_dispatch.js');
     panelHostJs = _bridgeAsset('panel_host.js');
     htmlSanitizerJs = _bridgeAsset('html_sanitizer.js');
+    cssDiagnosticsJs = _rendererAsset('css_diagnostics.js');
     cssSanitizerJs = _bridgeAsset('css_sanitizer.js');
     selectionManagerJs = _bridgeAsset('selection_manager.js');
     swipeHandlerJs = _bridgeAsset('swipe_gesture_handler.js');
@@ -240,7 +242,7 @@ void main() {
       );
     });
 
-    test('disabled path sanitizes active HTML before innerHTML insertion', () {
+    test('every render sanitizes active HTML before innerHTML insertion', () {
       expect(
         rendererJs,
         contains(
@@ -248,11 +250,14 @@ void main() {
         ),
       );
       final writeBlock = _extractWriteShadowContent(rendererJs);
-      final sanitize = writeBlock.indexOf('sanitizeMessageHtml(formatted)');
+      final sanitize = writeBlock.indexOf('sanitizeMessageHtml(formatted, {');
       final insertion = writeBlock.indexOf('root.innerHTML =');
       expect(sanitize, isNonNegative);
       expect(insertion, isNonNegative);
-      expect(writeBlock, contains('allowMessageScripts'));
+      expect(writeBlock, contains('allowScripts: allowMessageScripts'));
+      // No raw-insertion branch: enabling message scripts must not hand the
+      // message a different HTML/CSS policy, only script execution.
+      expect(writeBlock, isNot(contains('? formatted')));
     });
 
     test('search re-render sanitizes active HTML before insertion', () {
@@ -266,11 +271,14 @@ void main() {
         rendererMessageJs,
         rendererMessageJs.indexOf('setSearch(query, activeIndex = -1'),
       );
-      final sanitize = searchBlock.indexOf('sanitizeMessageHtml(highlighted)');
+      final sanitize = searchBlock.indexOf(
+        'sanitizeMessageHtml(highlighted, {',
+      );
       final insertion = searchBlock.indexOf('root.innerHTML =');
       expect(sanitize, isNonNegative);
       expect(insertion, isNonNegative);
-      expect(searchBlock, contains('this.allowMessageScripts'));
+      expect(searchBlock, contains('allowScripts: this.allowMessageScripts'));
+      expect(searchBlock, isNot(contains('? highlighted')));
     });
 
     test('search refresh pass can re-number without scrolling', () {
@@ -314,7 +322,7 @@ void main() {
     test('blocked scripts are detected before the sanitizer strips them', () {
       final writeBlock = _extractWriteShadowContent(rendererJs);
       final detect = writeBlock.indexOf('SCRIPT_TAG.test(formatted)');
-      final sanitize = writeBlock.indexOf('sanitizeMessageHtml(formatted)');
+      final sanitize = writeBlock.indexOf('sanitizeMessageHtml(formatted, {');
       expect(detect, isNonNegative);
       expect(detect, lessThan(sanitize));
       expect(writeBlock, contains('!allowMessageScripts'));
@@ -400,8 +408,92 @@ void main() {
     });
   });
 
+  group('message CSS diagnostics', () {
+    test('a render reports broken message CSS after the body is in place', () {
+      expect(
+        rendererJs,
+        contains("import { reportCssErrors } from './css_diagnostics.js'"),
+      );
+      final writeBlock = _extractWriteShadowContent(rendererJs);
+      final insertion = writeBlock.indexOf('root.innerHTML =');
+      final report = writeBlock.indexOf('reportCssErrors(root)');
+      expect(insertion, isNonNegative);
+      expect(report, greaterThan(insertion));
+      // A reply still arriving is half a stylesheet: every unclosed brace in it
+      // is on its way to being closed, so only a settled message is reported.
+      expect(
+        writeBlock,
+        contains(
+          'if (!isTyping && !window.bridge?.isGenerating) '
+          'reportCssErrors(root);',
+        ),
+      );
+    });
+
+    test('the search re-render puts the report back', () {
+      final searchBlock = _extractBlockBody(
+        rendererMessageJs,
+        rendererMessageJs.indexOf('setSearch(query, activeIndex = -1'),
+      );
+      expect(searchBlock, contains('reportCssErrors(root)'));
+    });
+
+    test('the report reads the stylesheet and never rewrites it', () {
+      expect(cssDiagnosticsJs, contains('inspectCss(style.textContent)'));
+      // Reading only: no assignment back into a <style>, and no innerHTML
+      // anywhere — the report quotes selectors the message wrote.
+      expect(cssDiagnosticsJs, isNot(contains('style.textContent =')));
+      expect(cssDiagnosticsJs, isNot(contains('innerHTML')));
+      expect(cssDiagnosticsJs, contains('item.textContent = problem;'));
+      expect(
+        cssSanitizerJs,
+        contains('export function withParsedSheet(css, read)'),
+      );
+    });
+
+    test('the scan names the failures a generated card actually makes', () {
+      for (final token in [
+        'unclosed',
+        'unexpected',
+        'unterminated comment',
+        'unterminated string',
+        'rule ignored',
+        'const MAX_REPORTED = 5',
+      ]) {
+        expect(cssDiagnosticsJs, contains(token));
+      }
+      // Memoized like the CSS parser cache: a streaming reply re-renders the
+      // same <style> on every chunk.
+      expect(
+        cssDiagnosticsJs,
+        contains('cache.delete(cache.keys().next().value)'),
+      );
+    });
+
+    test('the report has shadow-root styling of its own', () {
+      for (final selector in [
+        '.glaze-message .glaze-css-error {',
+        '.glaze-message .glaze-css-error-head {',
+        '.glaze-message .glaze-css-error-item',
+      ]) {
+        expect(rendererJs, contains(selector));
+      }
+    });
+  });
+
   group('CSS survives with message scripts disabled', () {
-    test('sanitizers keep <style> and delegate CSS to the CSS policy', () {
+    test('message CSS reaches the shadow root untouched', () {
+      // No CSS policy on the message path at all: `<style>` blocks and
+      // `style="…"` attributes are inserted verbatim whether or not message
+      // scripts are enabled.
+      final body = _extractBlockBody(
+        htmlSanitizerJs,
+        htmlSanitizerJs.indexOf('function stripMessageCode('),
+      );
+      expect(body, isNot(contains('style')));
+    });
+
+    test('ExtBlock sanitizer keeps <style> and delegates CSS to its policy', () {
       expect(
         htmlSanitizerJs,
         contains(
@@ -425,11 +517,66 @@ void main() {
         htmlSanitizerJs,
         contains("const EXT_BLOCK_CSS_SCOPE = '.ext-block-content'"),
       );
-      expect(htmlSanitizerJs, contains("return sanitizeHtml(html, '')"));
       expect(
         htmlSanitizerJs,
         contains('return sanitizeHtml(html, EXT_BLOCK_CSS_SCOPE)'),
       );
+    });
+
+    test('message HTML is filtered for code only, never for markup', () {
+      expect(
+        htmlSanitizerJs,
+        contains('sanitizeMessageHtml(html, { allowScripts = false } = {})'),
+      );
+      // Scripts on: the message HTML is inserted exactly as written.
+      expect(
+        htmlSanitizerJs,
+        contains("if (allowScripts) return String(html == null ? '' : html);"),
+      );
+      expect(htmlSanitizerJs, contains('return stripMessageCode(html);'));
+      // Scripts off: only the things that run code are removed. The strict
+      // element / CSS policy is the ExtBlock path's, and must not be reached
+      // from here — a card renders the same with execution on and off.
+      final body = _extractBlockBody(
+        htmlSanitizerJs,
+        htmlSanitizerJs.indexOf('function stripMessageCode('),
+      );
+      expect(
+        htmlSanitizerJs,
+        contains(
+          "const MESSAGE_CODE_ELEMENTS = new Set("
+          "['script', 'iframe', 'object', 'embed']);",
+        ),
+      );
+      expect(body, contains('MESSAGE_CODE_ELEMENTS.has('));
+      expect(body, contains("name.startsWith('on') || name === 'srcdoc'"));
+      expect(body, contains('isMessageCodeUrl(compact)'));
+      for (final forbidden in [
+        'BLOCKED_ELEMENTS',
+        'sanitizeStyleElement',
+        'sanitizeStyleAttribute',
+        'sanitizeCssText',
+        'sanitizeStyleDeclaration',
+      ]) {
+        expect(
+          body,
+          isNot(contains(forbidden)),
+          reason: 'message HTML/CSS must reach the shadow root untouched',
+        );
+      }
+    });
+
+    test('a message may not run code while execution is off', () {
+      final body = _extractBlockBody(
+        htmlSanitizerJs,
+        htmlSanitizerJs.indexOf('function isMessageCodeUrl('),
+      );
+      expect(body, contains("compact.startsWith('javascript:')"));
+      expect(body, contains("compact.startsWith('vbscript:')"));
+      // A `data:` document runs script on navigation; a `data:image/…` is a
+      // picture and stays, like the rest of the markup.
+      expect(body, contains("compact.startsWith('data:')"));
+      expect(body, contains("!compact.startsWith('data:image/')"));
     });
 
     test('inline styles are filtered by policy, not an allowlist', () {
