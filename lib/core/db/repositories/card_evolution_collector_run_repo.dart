@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart';
 
 import '../../utils/id_generator.dart';
+import '../../utils/time_helpers.dart';
 import '../app_db.dart';
 import 'ledger_reconciliation_run_repo.dart';
 
@@ -16,19 +17,22 @@ final class CardEvolutionCollectorClaimOutcome {
   bool get canRun => kind == 'claimed' || kind == 'existing';
 }
 
-final class CardEvolutionCollectorPair {
-  const CardEvolutionCollectorPair(this.first, this.boundary);
+const collectorReconciliationBatchSize = 3;
 
-  final LedgerReconciliationSuccessfulRunRow first;
-  final LedgerReconciliationSuccessfulRunRow boundary;
+final class CardEvolutionCollectorBatch {
+  CardEvolutionCollectorBatch(List<LedgerReconciliationSuccessfulRunRow> runs)
+    : assert(runs.length == collectorReconciliationBatchSize),
+      runs = List.unmodifiable(runs);
 
-  List<LedgerReconciliationSuccessfulRunRow> get runs => [first, boundary];
+  final List<LedgerReconciliationSuccessfulRunRow> runs;
+
+  LedgerReconciliationSuccessfulRunRow get first => runs.first;
+  LedgerReconciliationSuccessfulRunRow get boundary => runs.last;
 
   String get rangeHash => sha256
       .convert(
         utf8.encode(
-          '${first.id}\u001f${first.rangeHash}\u001e'
-          '${boundary.id}\u001f${boundary.rangeHash}',
+          runs.map((run) => '${run.id}\u001f${run.rangeHash}').join('\u001e'),
         ),
       )
       .toString();
@@ -78,13 +82,13 @@ class CardEvolutionCollectorRunRepo {
       if (existing.status == 'failed') {
         return CardEvolutionCollectorClaimOutcome('failed', existing);
       }
-      if (existing.inputHash != inputHash) {
-        return const CardEvolutionCollectorClaimOutcome('staleInput');
-      }
       if (existing.status == 'claimed' &&
           existing.leaseExpiresAt > now &&
           existing.ownerId != ownerId) {
         return const CardEvolutionCollectorClaimOutcome('busy');
+      }
+      if (existing.inputHash != inputHash && existing.leaseExpiresAt > now) {
+        return const CardEvolutionCollectorClaimOutcome('staleInput');
       }
       final changed =
           await (db.update(db.cardEvolutionCollectorRuns)..where(
@@ -96,6 +100,7 @@ class CardEvolutionCollectorRunRepo {
                   ownerId: Value(ownerId),
                   leaseExpiresAt: Value(now + leaseSeconds),
                   status: const Value('claimed'),
+                  inputHash: Value(inputHash),
                   failureCode: const Value(null),
                   failureDetail: const Value(null),
                   failedAt: const Value(null),
@@ -329,9 +334,9 @@ class CardEvolutionCollectorRunRepo {
     return 0;
   }
 
-  /// Missing non-overlapping pairs from the valid logical reconciliation
-  /// projection. One collector is anchored to each pair's second run.
-  Future<List<CardEvolutionCollectorPair>> pendingValidPairs(
+  /// Missing non-overlapping batches from the valid logical reconciliation
+  /// projection. One collector is anchored to each batch's final run.
+  Future<List<CardEvolutionCollectorBatch>> pendingValidPairs(
     String sessionId, {
     LedgerReconciliationSuccessfulRunRow? currentRun,
   }) async {
@@ -339,18 +344,24 @@ class CardEvolutionCollectorRunRepo {
     var collectors = await (db.select(
       db.cardEvolutionCollectorRuns,
     )..where((row) => row.sessionId.equals(sessionId))).get();
-    final expectedPairs = <String, CardEvolutionCollectorPair>{};
-    for (var index = 0; index + 1 < runs.length; index += 2) {
-      final pair = CardEvolutionCollectorPair(runs[index], runs[index + 1]);
-      expectedPairs[pair.boundary.id] = pair;
+    final expectedBatches = <String, CardEvolutionCollectorBatch>{};
+    for (
+      var index = 0;
+      index + collectorReconciliationBatchSize <= runs.length;
+      index += collectorReconciliationBatchSize
+    ) {
+      final batch = CardEvolutionCollectorBatch(
+        runs.sublist(index, index + collectorReconciliationBatchSize),
+      );
+      expectedBatches[batch.boundary.id] = batch;
     }
     final incompatibleJournal = collectors.any((collector) {
-      final pair = expectedPairs[collector.reconciliationRunId];
-      return pair == null || collector.rangeHash != pair.rangeHash;
+      final batch = expectedBatches[collector.reconciliationRunId];
+      return batch == null || collector.rangeHash != batch.rangeHash;
     });
     if (incompatibleJournal) {
-      // Pre-pair collectors cannot prove that both reconciliations were seen.
-      // Rebuild the durable journal and its aggregate effects conservatively.
+      // A journal from another cadence cannot prove the current batch ranges.
+      // Rebuild it and its aggregate effects conservatively.
       await db.transaction(() async {
         await (db.delete(
           db.cardEvolutionCollectorRuns,
@@ -365,61 +376,81 @@ class CardEvolutionCollectorRunRepo {
       for (final row in collectors)
         if (row.status == 'completed') row.reconciliationRunId: row,
     };
-    final pairs = <CardEvolutionCollectorPair>[];
-    for (var index = 0; index + 1 < runs.length; index += 2) {
-      final boundary = runs[index + 1];
-      final pair = CardEvolutionCollectorPair(runs[index], boundary);
+    final batches = <CardEvolutionCollectorBatch>[];
+    for (
+      var index = 0;
+      index + collectorReconciliationBatchSize <= runs.length;
+      index += collectorReconciliationBatchSize
+    ) {
+      final batch = CardEvolutionCollectorBatch(
+        runs.sublist(index, index + collectorReconciliationBatchSize),
+      );
+      final boundary = batch.boundary;
       final completed = completedByBoundary[boundary.id];
-      if (completed == null || completed.rangeHash != pair.rangeHash) {
-        pairs.add(pair);
+      if (completed == null || completed.rangeHash != batch.rangeHash) {
+        batches.add(batch);
       }
     }
-    return pairs;
+    return batches;
   }
 
-  /// Valid reconciliation pairs that have never received a Collector claim.
-  /// Failed and in-flight rows use their dedicated recovery paths instead.
-  Future<List<CardEvolutionCollectorPair>> unclaimedValidPairs(
+  /// Valid reconciliation batches that can be started from the Collector UI.
+  /// Failed and live in-flight rows use their dedicated recovery paths.
+  Future<List<CardEvolutionCollectorBatch>> unclaimedValidPairs(
     String sessionId,
   ) async {
     final runs = await _validOrLegacyRuns(sessionId);
     final collectors = await (db.select(
       db.cardEvolutionCollectorRuns,
     )..where((row) => row.sessionId.equals(sessionId))).get();
-    final pairs = <CardEvolutionCollectorPair>[];
-    for (var index = 0; index + 1 < runs.length; index += 2) {
-      final pair = CardEvolutionCollectorPair(runs[index], runs[index + 1]);
+    final now = currentTimestampSeconds();
+    final batches = <CardEvolutionCollectorBatch>[];
+    for (
+      var index = 0;
+      index + collectorReconciliationBatchSize <= runs.length;
+      index += collectorReconciliationBatchSize
+    ) {
+      final batch = CardEvolutionCollectorBatch(
+        runs.sublist(index, index + collectorReconciliationBatchSize),
+      );
       final hasCompatibleClaim = collectors.any(
         (collector) =>
-            collector.reconciliationRunId == pair.boundary.id &&
-            collector.rangeHash == pair.rangeHash,
+            collector.reconciliationRunId == batch.boundary.id &&
+            collector.rangeHash == batch.rangeHash &&
+            (collector.status != 'claimed' || collector.leaseExpiresAt > now),
       );
-      if (!hasCompatibleClaim) pairs.add(pair);
+      if (!hasCompatibleClaim) batches.add(batch);
     }
-    return pairs;
+    return batches;
   }
 
-  /// Resolves collector boundaries back to their exact two-run logical pairs.
+  /// Resolves collector boundaries back to their exact logical batches.
   Future<List<LedgerReconciliationSuccessfulRunRow>> runsForCollectors(
     String sessionId,
     List<CardEvolutionCollectorRunRow> collectors,
   ) async {
     if (collectors.isEmpty) return const [];
     final runs = await _validOrLegacyRuns(sessionId);
-    final byBoundary = <String, CardEvolutionCollectorPair>{};
-    for (var index = 0; index + 1 < runs.length; index += 2) {
-      final pair = CardEvolutionCollectorPair(runs[index], runs[index + 1]);
-      byBoundary[pair.boundary.id] = pair;
+    final byBoundary = <String, CardEvolutionCollectorBatch>{};
+    for (
+      var index = 0;
+      index + collectorReconciliationBatchSize <= runs.length;
+      index += collectorReconciliationBatchSize
+    ) {
+      final batch = CardEvolutionCollectorBatch(
+        runs.sublist(index, index + collectorReconciliationBatchSize),
+      );
+      byBoundary[batch.boundary.id] = batch;
     }
     final result = <LedgerReconciliationSuccessfulRunRow>[];
     for (final collector in collectors) {
-      final pair = byBoundary[collector.reconciliationRunId];
-      if (pair == null ||
-          pair.boundary.chainHash != collector.reconciliationChainHash ||
-          pair.rangeHash != collector.rangeHash) {
+      final batch = byBoundary[collector.reconciliationRunId];
+      if (batch == null ||
+          batch.boundary.chainHash != collector.reconciliationChainHash ||
+          batch.rangeHash != collector.rangeHash) {
         return const [];
       }
-      result.addAll(pair.runs);
+      result.addAll(batch.runs);
     }
     return result;
   }
@@ -430,7 +461,7 @@ class CardEvolutionCollectorRunRepo {
   }) async {
     final runRepo = LedgerReconciliationRunRepo(db);
     final logical = await runRepo.readSession(sessionId);
-    // Pairing needs an authoritative predecessor. Never infer one from raw
+    // Batching needs an authoritative predecessor. Never infer one from raw
     // rows when the canonical logical chain cannot be projected.
     return logical;
   }

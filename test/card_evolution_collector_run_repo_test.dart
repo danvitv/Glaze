@@ -89,20 +89,90 @@ void main() {
     );
     expect((await repo.getById(claim.row!.id))?.status, 'claimed');
   });
+
+  test('expired claim can be reclaimed with refreshed input', () async {
+    final first = await repo.claim(
+      reconciliationRun: _run(),
+      characterId: 'character',
+      inputHash: 'old-input',
+      ownerId: 'owner-1',
+      now: 10,
+      leaseSeconds: 60,
+    );
+
+    final reclaimed = await repo.claim(
+      reconciliationRun: _run(),
+      characterId: 'character',
+      inputHash: 'new-input',
+      ownerId: 'owner-2',
+      now: 71,
+      leaseSeconds: 60,
+    );
+
+    expect(reclaimed.kind, 'existing');
+    expect(reclaimed.row?.id, first.row?.id);
+    expect(reclaimed.row?.ownerId, 'owner-2');
+    expect(reclaimed.row?.inputHash, 'new-input');
+    expect(reclaimed.row?.leaseExpiresAt, 131);
+  });
+
+  test('live claim rejects refreshed input', () async {
+    await repo.claim(
+      reconciliationRun: _run(),
+      characterId: 'character',
+      inputHash: 'old-input',
+      ownerId: 'owner-1',
+      now: 10,
+      leaseSeconds: 60,
+    );
+
+    final outcome = await repo.claim(
+      reconciliationRun: _run(),
+      characterId: 'character',
+      inputHash: 'new-input',
+      ownerId: 'owner-1',
+      now: 20,
+      leaseSeconds: 60,
+    );
+
+    expect(outcome.kind, 'staleInput');
+  });
+
+  test('collector batch hash includes the middle reconciliation', () {
+    final first = _run(id: 'run-1', ordinal: 1, contentHash: 'first');
+    final middle = _run(id: 'run-2', ordinal: 2, contentHash: 'middle');
+    final changedMiddle = _run(
+      id: 'run-2-rebuilt',
+      ordinal: 2,
+      contentHash: 'changed-middle',
+    );
+    final boundary = _run(id: 'run-3', ordinal: 3, contentHash: 'boundary');
+
+    expect(
+      CardEvolutionCollectorBatch([first, middle, boundary]).rangeHash,
+      isNot(
+        CardEvolutionCollectorBatch([first, changedMiddle, boundary]).rangeHash,
+      ),
+    );
+  });
 }
 
-LedgerReconciliationSuccessfulRunRow _run() {
+LedgerReconciliationSuccessfulRunRow _run({
+  String id = 'run',
+  int ordinal = 2,
+  String contentHash = 'content',
+}) {
   final run = LedgerReconciliationRun(
-    id: 'run',
+    id: id,
     sessionId: 'session',
-    ordinal: 2,
-    anchors: const [
+    ordinal: ordinal,
+    anchors: [
       ReconciliationAnchor(
         messageId: 'a1',
         swipeId: 0,
         agentSwipeId: 0,
         role: 'assistant',
-        contentHash: 'content',
+        contentHash: contentHash,
       ),
     ],
     acceptedManifestRefs: const [],

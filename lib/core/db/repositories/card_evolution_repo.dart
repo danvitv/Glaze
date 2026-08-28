@@ -17,7 +17,8 @@ import 'session_lorebook_evolution_repo.dart';
 
 const _maxChatHistoryMessages = 40;
 const _writerCollectorBatchSize = 2;
-const _writerReconciliationRunCount = _writerCollectorBatchSize * 2;
+const _writerReconciliationRunCount =
+    _writerCollectorBatchSize * collectorReconciliationBatchSize;
 const _maxCanonValueCharacters = 2000;
 const _maxLorebookEntryCharacters = 60000;
 const _maxLorebookTotalCharacters = 600000;
@@ -206,6 +207,30 @@ class CardEvolutionRepo {
           db.cardEvolutionClaims,
         )..where((row) => row.id.equals(proposal.claimId))).go();
         return const CardEvolutionDeleteOutcome('deleted');
+      });
+
+  /// Discards a failed automated writer chain so its collector boundary may be
+  /// attempted again. Completed claims and review proposals are never touched.
+  Future<CardEvolutionDeleteOutcome> deleteFailedWriterClaim(String claimId) =>
+      db.transaction(() async {
+        final claim = await (db.select(
+          db.cardEvolutionClaims,
+        )..where((row) => row.id.equals(claimId))).getSingleOrNull();
+        if (claim == null) return const CardEvolutionDeleteOutcome('notFound');
+        if (claim.status != 'failed') {
+          return const CardEvolutionDeleteOutcome('invalidState');
+        }
+        await (db.delete(
+          db.cardEvolutionWriterCalls,
+        )..where((row) => row.claimId.equals(claimId))).go();
+        final deleted =
+            await (db.delete(db.cardEvolutionClaims)..where(
+                  (row) => row.id.equals(claimId) & row.status.equals('failed'),
+                ))
+                .go();
+        return CardEvolutionDeleteOutcome(
+          deleted == 1 ? 'deleted' : 'invalidState',
+        );
       });
 
   /// Diagnostic variant of [isEligible]: reports why the session cannot be
@@ -653,19 +678,29 @@ class CardEvolutionRepo {
       return const CardEvolutionFinalizeOutcome('activeJob');
     }
     final cardOperations = operations.whereType<CardRewriteOperationSnapshot>();
-    final lorebookOperations = operations
+    final rawLorebookOperations = operations
         .whereType<LorebookRewriteOperationSnapshot>()
         .toList(growable: false);
     final allowedLoreTargets = _loreTargetsFromInput(selected);
-    if (allowedLoreTargets == null ||
-        lorebookOperations.any((operation) {
-          final target =
-              allowedLoreTargets['${operation.lorebookId}\u0000${operation.entryId}'];
-          return target == null ||
-              target.$1 != operation.baseContent ||
-              target.$2 != operation.expectedContentHash;
-        })) {
+    if (allowedLoreTargets == null) {
       return const CardEvolutionFinalizeOutcome('invalidLorebookOperation');
+    }
+    final lorebookOperations = <LorebookRewriteOperationSnapshot>[];
+    for (final operation in rawLorebookOperations) {
+      final target =
+          allowedLoreTargets['${operation.lorebookId}\u0000${operation.entryId}'];
+      if (target == null) {
+        return const CardEvolutionFinalizeOutcome('invalidLorebookOperation');
+      }
+      lorebookOperations.add(
+        LorebookRewriteOperationSnapshot(
+          lorebookId: operation.lorebookId,
+          entryId: operation.entryId,
+          baseContent: target.$1,
+          expectedContentHash: target.$2,
+          patches: operation.patches,
+        ),
+      );
     }
     final loreOnlyObservationKeys = _loreOnlyObservationKeys(selected);
     if (cardOperations.any(
@@ -724,8 +759,12 @@ class CardEvolutionRepo {
       return const CardEvolutionFinalizeOutcome('manualControl');
     }
 
+    final normalizedOperations = <RewriteOperationSnapshot>[
+      ...cardOperations,
+      ...lorebookOperations,
+    ];
     final snapshots = [
-      for (final operation in operations)
+      for (final operation in normalizedOperations)
         RewriteOperationSnapshotCodec.encode(operation),
     ];
     final jobId = 'rewrite-job-${generateId()}';
@@ -936,12 +975,15 @@ class CardEvolutionRepo {
     );
   });
 
-  /// Builds one collector snapshot from two consecutive valid logical
-  /// reconciliations. Both immutable histories remain available as evidence.
+  /// Builds one collector snapshot from a complete logical batch. Every
+  /// immutable reconciliation history remains available as evidence.
   Future<CardEvolutionObservationSnapshot?> buildObservationSnapshotForRuns(
     List<LedgerReconciliationSuccessfulRunRow> runs,
   ) => db.transaction(() async {
-    if (runs.length != 2 || runs[0].sessionId != runs[1].sessionId) return null;
+    if (runs.length != collectorReconciliationBatchSize ||
+        runs.any((run) => run.sessionId != runs.first.sessionId)) {
+      return null;
+    }
     final sessionId = runs.first.sessionId;
     final selected = (await _selectInput(
       sessionId,
@@ -960,8 +1002,7 @@ class CardEvolutionRepo {
     );
   });
 
-  /// Counts successful Ledger reconciliations for the session. The observation
-  /// pass runs on every even count (every 2nd reconciliation cadence).
+  /// Counts successful Ledger reconciliations for the session.
   Future<int> countSuccessfulReconciliations(String sessionId) async {
     final result = await db
         .customSelect(
@@ -1792,8 +1833,8 @@ Map<String, (String, String)>? _loreTargetsFromInput(String selectedInputJson) {
     if (entries is! List) return null;
     final result = <String, (String, String)>{};
     for (final raw in entries) {
-      // Entries without session evolution carry no separate base; their
-      // current content is the CAS base the model must echo.
+      // Existing overlays retain their original base for rollback provenance;
+      // entries without an overlay use current content as that initial base.
       final base = raw is Map ? raw['baseContent'] ?? raw['content'] : null;
       if (raw is! Map ||
           raw['lorebookId'] is! String ||
