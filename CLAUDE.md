@@ -162,7 +162,8 @@ When editing files matching a pattern below, READ the corresponding rule file FI
 | Drift reads/writes, repositories | `docs/rules/database.md` |
 | Architecture details, full flow | `docs/ARCHITECTURE.md` |
 | Formal invariants with code references | `docs/INVARIANTS.md` |
-| Custom `==...==` markdown markers, message rendering | `docs/markdown-markers.md` |
+| Message rendering — `assets/chat_webview/formatter/`, `renderer/` | `docs/rules/message-rendering.md` + `docs/INVARIANTS.md` (INV-MR1–8) |
+| Custom `==...==` markdown markers | `docs/markdown-markers.md` |
 | Windows/build failures, dependency overrides | `docs/BUILD_NOTES.md` |
 | Class/file organization, decomposition | `docs/CODE_STYLE.md` |
 | Any screen, sheet or dialog — which widget to reach for | `docs/UI_KIT.md` |
@@ -176,7 +177,7 @@ When editing files matching a pattern below, READ the corresponding rule file FI
 - **Feature branches are always based on `nightly`** — `stable` is the default branch, so a fresh clone starts there; check the base first, and `git rebase origin/nightly` a branch that was cut from the wrong one before opening the PR.
 - Open PRs only against upstream repository `hydall/Glaze` (base: `hydall/Glaze:nightly`), not against fork repos.
 - PR title and body are **in English**, and the body lists the changes as bullets (one bullet per change, `##` headings when a PR carries several independent fixes) plus how it was verified. Full rules: `docs/WORKFLOW.md` § PR title and body.
-- PRs are squash-merged and gated on CI (`.github/workflows/ci.yml` — `flutter analyze` + `flutter test`); a red check blocks the merge.
+- PRs are squash-merged and gated on CI (`.github/workflows/ci.yml` — `flutter analyze` + `flutter test` + the WebView render suite in `test/webview_js`); a red check blocks the merge.
 - Release branches are `nightly` → `staging` → `stable`, one per build channel; features enter at `nightly` and are promoted by merge. Channel semantics: `docs/RELEASE_CHANNELS.md`.
 - Run `dart run build_runner build` after changing any freezed/drift model.
 - Single responsibility: split a class before it grows past ~200-250 lines (thin orchestrators, fat specialists, constructor injection). Details: `docs/CODE_STYLE.md`.
