@@ -107,7 +107,11 @@ export const SHADOW_STYLE = `
   .glaze-message .janitor-options-btn svg,
   .glaze-message .imggen-options-btn svg { width: 16px; height: 16px; fill: #fff; pointer-events: none; }
 
-  /* ── Imagen: loading shimmer ── */
+  /* ── Imagen: loading shimmer ──
+     Fallback only. The placeholder moves its content into a shadow root of its
+     own right after insertion (renderer/imggen_placeholder.js), so message CSS
+     cannot restyle it; these rules are what paints the block on an engine that
+     refuses attachShadow. */
   .glaze-message .imggen-loading {
     display: block;
     max-width: 100%;
@@ -161,6 +165,19 @@ export const SHADOW_STYLE = `
     z-index: 3;
   }
   .glaze-message .imggen-stop-btn:active { background: rgba(0,0,0,0.8); }
+  .glaze-message .imggen-queued-hint { display: none; }
+  .glaze-message .imggen-loading.imggen-queued .imggen-loading-hint,
+  .glaze-message .imggen-loading.imggen-queued .imggen-loading-timer,
+  .glaze-message .imggen-loading.imggen-queued .imggen-stop-btn { display: none; }
+  .glaze-message .imggen-loading.imggen-queued .imggen-queued-hint {
+    display: inline-block;
+    padding: 12px 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    user-select: none;
+  }
+  .glaze-message .imggen-stop-btn svg { width: 14px; height: 14px; fill: currentColor; pointer-events: none; }
   .glaze-message .imggen-loading-prompt {
     position: absolute;
     bottom: 10px;

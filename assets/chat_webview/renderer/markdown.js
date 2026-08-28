@@ -1,6 +1,7 @@
 import { syncCodeBlockMetadata } from './code_highlight.js';
 import { formatMessageBody } from './macros_in_message.js';
 import { reportCssErrors } from './css_diagnostics.js';
+import { isolateImgGenPlaceholders } from './imggen_placeholder.js';
 import { sanitizeMessageHtml } from '../bridge/html_sanitizer.js';
 
 /** Cheap pre-sanitize probe for an embedded `<script>` in formatted HTML. */
@@ -37,6 +38,7 @@ export function writeShadowContent({
   searchQuery,
   applySearchHighlight,
   allowMessageScripts = false,
+  isReasoning = false,
 }) {
   if (!host || !host.shadowRoot) return;
   const root = host.shadowRoot.querySelector('.glaze-message');
@@ -46,7 +48,7 @@ export function writeShadowContent({
       root.innerHTML = '';
       return;
     }
-    let formatted = formatMessageBody(formatter, text, isUser);
+    let formatted = formatMessageBody(formatter, text, isUser, isReasoning);
     if (searchQuery) formatted = applySearchHighlight(formatted);
     if (!allowMessageScripts && SCRIPT_TAG.test(formatted)) {
       notifyMessageScriptBlocked();
@@ -58,6 +60,9 @@ export function writeShadowContent({
     root.innerHTML = sanitizeMessageHtml(formatted, {
       allowScripts: allowMessageScripts,
     });
+    // Before anything else touches the tree: the placeholder's content moves
+    // behind a shadow boundary, out of reach of the message's own CSS.
+    isolateImgGenPlaceholders(root);
     syncCodeBlockMetadata(root);
     // A reply still arriving is half a stylesheet, and every unclosed brace in
     // it is on its way to being closed — report only what the message settled

@@ -40,6 +40,8 @@ void main() {
   late String htmlSanitizerJs;
   late String cssDiagnosticsJs;
   late String cssSanitizerJs;
+  late String imgGenPlaceholderJs;
+  late String imgGenTimerJs;
   late String selectionManagerJs;
   late String swipeHandlerJs;
   late String glazeSdkJs;
@@ -68,6 +70,8 @@ void main() {
     interactionDispatchJs = _bridgeAsset('interaction_dispatch.js');
     panelHostJs = _bridgeAsset('panel_host.js');
     htmlSanitizerJs = _bridgeAsset('html_sanitizer.js');
+    imgGenPlaceholderJs = _rendererAsset('imggen_placeholder.js');
+    imgGenTimerJs = _bridgeAsset('imggen_timer.js');
     cssDiagnosticsJs = _rendererAsset('css_diagnostics.js');
     cssSanitizerJs = _bridgeAsset('css_sanitizer.js');
     selectionManagerJs = _bridgeAsset('selection_manager.js');
@@ -1048,6 +1052,180 @@ void main() {
       expect(rule, contains('height: 18px'));
       expect(rule, contains('opacity: 0.45'));
       expect(rule, contains('rgba(0, 0, 0, 0.38)'));
+    });
+
+    test('a block still waiting for its picture renders no <img>', () {
+      // An <img> whose src is the [IMG:GEN…] placeholder has nothing to load,
+      // so the only thing it can paint is the browser's broken-image glyph.
+      // Both stored spellings are pulled out as pending blocks instead.
+      expect(
+        formatterFormatterJs,
+        contains('export function parseImagePendingElement('),
+      );
+      expect(formatterFormatterJs, contains('IMG_SRC_GEN_ELEMENT_REGEX'));
+      expect(
+        RegExp(
+          r'html = html\.replace\(IIG_ELEMENT_REGEX[\s\S]*?'
+          r"imgBlocks\.push\(\{ type: 'gen'",
+        ).hasMatch(formatterFormatterJs),
+        isTrue,
+        reason: 'a pending stored element must render the loading placeholder',
+      );
+      // The bare `<img src="[IMG:GEN…]">` element has to be consumed whole,
+      // before the pass that would take only the payload out of its src.
+      final srcElementIdx =
+          formatterFormatterJs.indexOf('html.replace(IMG_SRC_GEN_ELEMENT_REGEX');
+      final bareTagIdx = formatterFormatterJs.indexOf(
+        r'html.replace(/\[IMG:GEN(?::(.*?))?\]/g',
+      );
+      expect(srcElementIdx, isNonNegative);
+      expect(bareTagIdx, isNonNegative);
+      expect(srcElementIdx, lessThan(bareTagIdx));
+    });
+
+    test('a tag inside a reasoning block never becomes a block', () {
+      // INV-IG11: Dart does not generate from a tag the model wrote while
+      // thinking, so the WebView must not render a placeholder whose picture
+      // is never coming — nor allocate a data-img-index Dart does not count.
+      expect(
+        formatterFormatterJs,
+        contains('_processText(text, isUser, skipQuotes = false, '
+            'inReasoning = false)'),
+      );
+      // The reasoning body is the one recursive pass that sets the flag.
+      expect(
+        formatterFormatterJs,
+        contains('this._processText(content, isUser, false, true)'),
+      );
+      // All three pending spellings fall through to the inert text collector.
+      expect(
+        RegExp('if [(]inReasoning[)] return inertTag[(]match[)];')
+            .allMatches(formatterFormatterJs)
+            .length,
+        3,
+      );
+      // The split-out `message.reasoning` panel is reasoning too, and Dart
+      // never scans that field at all — so it renders with the same flag.
+      expect(
+        formatterFormatterJs,
+        contains(r'const key = `${text}:${isUser}:${inReasoning}`'),
+        reason: 'the format cache must not serve a body render to a '
+            'reasoning panel, or the other way round',
+      );
+      expect(
+        rendererMessageJs,
+        contains(
+          "this._writeShadowContent(shadowHost, reasoning, isUser, "
+          "false, true)",
+        ),
+      );
+      expect(
+        rendererJs,
+        contains('formatMessageBody(formatter, text, isUser, isReasoning)'),
+      );
+      // Restored as the literal text the model wrote, before the leak sweep.
+      final restoreIdx = formatterFormatterJs.indexOf(r'\x01IGT_(\d+)\x01');
+      final sweepIdx = formatterFormatterJs.indexOf(
+        r"html = html.replace(/\x01[A-Z_]+\d+\x01/g, '');",
+      );
+      expect(restoreIdx, isNonNegative);
+      expect(sweepIdx, isNonNegative);
+      expect(restoreIdx, lessThan(sweepIdx));
+    });
+
+    test('the stop button is an SVG, not an emoji glyph', () {
+      // ⏹ is a font-dependent emoji: a different size and colour on every
+      // platform. A path takes `fill: currentColor` and stays put.
+      expect(formatterFormatterJs, contains('const STOP_SVG ='));
+      expect(formatterFormatterJs, contains('<rect x="7" y="7"'));
+      final stopIdx = formatterFormatterJs.indexOf('class="imggen-stop-btn"');
+      expect(stopIdx, isNonNegative);
+      final button = formatterFormatterJs.substring(
+        stopIdx,
+        formatterFormatterJs.indexOf('</button>', stopIdx),
+      );
+      expect(button, contains(r'${STOP_SVG}'));
+      expect(button, isNot(contains('⏹')));
+      // The icon takes the button's colour instead of the font's.
+      expect(imgGenPlaceholderJs, contains('fill: currentColor'));
+    });
+
+    test('a pending block reads as queued until the image stage runs', () {
+      // INV-IG1: generation starts only after the reply has finished
+      // streaming and post-gen reaches the image stage. Until then there is
+      // nothing to time and nothing to stop — a running placeholder would be
+      // a lie, and its Stop button would cancel a token that does not exist.
+      expect(formatterFormatterJs, contains('class="imggen-queued-hint"'));
+      expect(
+        imgGenPlaceholderJs,
+        contains('return !bridge.isGeneratingImage;'),
+        reason: 'the image stage flag is what makes a block live',
+      );
+      expect(
+        imgGenPlaceholderJs,
+        contains(':host(.imggen-queued) .imggen-loading-timer,'),
+      );
+      expect(
+        imgGenPlaceholderJs,
+        contains(':host(.imggen-queued) .imggen-stop-btn { display: none; }'),
+      );
+      // The clock has to measure the generation, not the wait before it: the
+      // block was stamped when it rendered, possibly a whole reply ago.
+      expect(
+        imgGenPlaceholderJs,
+        contains('function restartTimer(block)'),
+      );
+      expect(imgGenPlaceholderJs, contains("timer.dataset.start = String(Date.now())"));
+      // The flip carries no re-render of its own, so the bridge drives it.
+      expect(
+        bridgeControllerJs,
+        contains('refreshImgGenPlaceholderState()'),
+      );
+      expect(bridgeControllerJs, contains('setImageGenerating(value)'));
+      // A hidden clock must not hold the ticker's interval open.
+      expect(
+        imgGenTimerJs,
+        contains("block.classList.contains('imggen-queued')"),
+      );
+    });
+
+    test('the loading placeholder is sealed off from message CSS', () {
+      // A card ships its own <style>, and its rules — !important included —
+      // land in the same shadow root as the placeholder. A boundary is the
+      // only thing that keeps app chrome looking like app chrome.
+      expect(
+        imgGenPlaceholderJs,
+        contains('export function isolateImgGenPlaceholders('),
+      );
+      expect(imgGenPlaceholderJs, contains("attachShadow({ mode: 'open' })"));
+      // Inherited properties cross a shadow boundary; `all: initial` stops
+      // them at the wrapper inside.
+      expect(imgGenPlaceholderJs, contains('all: initial'));
+      // The host still lives in the message tree, so its geometry is pinned
+      // with the one declaration a message stylesheet cannot outrank.
+      expect(
+        imgGenPlaceholderJs,
+        contains("host.style.setProperty(property, value, 'important')"),
+      );
+      // Both render paths re-isolate: a search pass rewrites innerHTML too.
+      expect(rendererJs, contains('isolateImgGenPlaceholders(root)'));
+      expect(
+        RegExp('isolateImgGenPlaceholders\\(root\\)')
+            .allMatches(rendererJs)
+            .length,
+        greaterThanOrEqualTo(2),
+      );
+    });
+
+    test('the elapsed timer reaches into the placeholder shadow root', () {
+      // The ticker's elements are one boundary deeper than the message body
+      // once the placeholder is isolated, so a flat query never sees them.
+      expect(imgGenTimerJs, contains('_updateIn(root, now)'));
+      expect(imgGenTimerJs, contains('block.shadowRoot'));
+      expect(
+        imgGenTimerJs,
+        contains(r"querySelectorAll('.imggen-loading')"),
+      );
     });
 
     test('a failed generated image re-requests itself', () {

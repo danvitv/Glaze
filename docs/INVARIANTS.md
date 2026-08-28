@@ -82,7 +82,23 @@ runs against that committed result. With Studio enabled it awaits
 processes image tags, so images bind to the selected final/cleaned/partial
 swipe. It never runs concurrently with text generation. `continueMessage()`
 uses the same pipeline and post-generation coordinator, bound to the merged
-message — see INV-CM2.
+message — see INV-CM2. An errored stream returns before post-gen, and an abort
+bumps `AbortHandler`'s gen id so every stage bails, so neither reaches the
+image stage at all.
+
+The WebView says the same thing. `ChatState.isGeneratingImage` is raised by
+`ImageGenProcessor` before it dispatches the first block of a message and
+dropped after the last — on the pipeline path and on every manual retry — and
+it reaches the page through `bridge.setImageGenerating()`. A pending block is
+rendered *queued* whenever that flag is down: no elapsed clock (nothing is
+elapsing), no Stop button (there is no `_imgGenCancelToken` to cancel yet), and
+a label that says so. That covers the whole reply stream and the post-gen work
+before the image stage, which with Studio on runs the cleaner first and can
+take seconds. The flip carries no re-render of its own — the reply's last chunk
+is already painted — so `refreshImgGenPlaceholderState()` restamps the blocks
+on screen, and restamps `data-start` with them: the clock was stamped when the
+block was *rendered*, so without that a block that waited out a long reply
+would jump straight to "48.2s" the moment it went live.
 
 ### INV-IG2: Image generation has independent abort infrastructure
 
@@ -161,7 +177,54 @@ A finished block is written by `ImageTagMarkup.encodeResultElement()` only:
   `scanPendingTags()` and `scanResultElements()` from ever claiming the same
   element (`ImgGenPatterns.isPendingIigElement`).
 * the WebView formatter parses the element with `parseImageResultElement()`,
-  the mirror of the Dart writer.
+  the mirror of the Dart writer, and a pending one with
+  `parseImagePendingElement()`. Both spellings of a pending element
+  (`<img data-iig-instruction… src="[IMG:GEN]">` and the bare
+  `<img src="[IMG:GEN:…]">`) are consumed **whole** and rendered as the loading
+  placeholder. Leaving the tag in the markup would put an `<img>` with no
+  loadable source into the message, and the reader would watch the browser's
+  broken-image icon for the length of the generation.
+
+### INV-IG10: The loading placeholder is sealed off from message CSS
+
+A message body is authored content — cards ship their own `<style>`, and those
+rules land in the same shadow root as everything the formatter renders. The
+`[IMG:GEN…]` placeholder is app chrome, so
+`renderer/imggen_placeholder.js` gives each `.imggen-loading` a shadow root of
+its own and moves its content inside, out of reach of message rules that a
+specificity war could never win (a card's `!important` beats any selector in
+`SHADOW_STYLE`). Two leaks are closed by hand: the host still lives in the
+message tree, so its geometry is pinned as inline `!important`; and inherited
+properties cross a shadow boundary, so the wrapper inside starts from
+`all: initial`. The nested root is **open** — `InteractionDispatch` finds the
+stop button through `composedPath()` and `ImgGenTimer` descends into it for the
+elapsed-time ticker, both of which a closed root would break.
+
+### INV-IG11: A tag inside a reasoning block never generates
+
+A model plans its images out loud — "then I'll put `[IMG:GEN:…]` here" — and a
+tag it writes inside `<think>…</think>` is a note to itself, not a request.
+Generating from it produces a picture nobody asked for, in the middle of the
+model's own scratchpad.
+
+`ImgGenPatterns.reasoningSpans()` marks those spans and
+`ImageTagMarkup.scanPendingTags()` walks past them. That scan is the single
+gate every generation goes through — `hasImageGenTags`, `scanImageBlocks`, the
+replace/reset helpers and `ImageGenProcessor` all read a message through it —
+so a reasoning tag is never generated, never rewritten into an error or
+"disabled" card, and never counted in the block numbering.
+
+The WebView agrees on both halves, which is what keeps `data-img-index`
+addressing the same block on either side: `_processText` carries an
+`inReasoning` flag into the recursive pass over a think block, and the three
+pending spellings there are restored as the literal text the model wrote (step
+19b) instead of becoming an image block. Only a **closed** block counts as
+reasoning, on both sides — an unclosed `<think>` is not folded away by the
+formatter either, so a tag after one still generates.
+
+Finished `<img data-iig-…>` blocks are deliberately *not* filtered: they are
+pictures that already exist, and `scanResultElements()` is what keeps their
+paths resolving and strips them from a sync payload.
 
 ### INV-IG7: Regenerating an image never adds a message swipe
 
