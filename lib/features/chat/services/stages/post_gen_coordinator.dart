@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/llm/generation_phase.dart';
 import '../../../../core/models/character.dart';
 import '../../../../core/models/chat_message.dart';
 import '../../../../core/llm/prompt/main_model_context_snapshot.dart';
@@ -95,6 +96,7 @@ class PostGenCoordinator {
     }
     final current = ctx.getState().value;
     if (current == null || current.session?.id != sessionId) return false;
+    ctx.setPhase(GenerationPhase.finalizing, genId: genId);
     if (!current.isPostGenRunning) {
       ctx.setState(
         AsyncData(

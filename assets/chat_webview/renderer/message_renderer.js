@@ -15,6 +15,7 @@ import {
   roleKey,
 } from './message_template.js';
 import { SHADOW_STYLE } from './shadow_style.js';
+import { DEFAULT_TYPING_TEXT } from './typing_phase.js';
 
 /* ============================================================
  * Renderer — produces DOM matching Glaze/src/components/chat/ChatMessage.vue
@@ -400,13 +401,20 @@ if (messageData.isEditing) classes.push('editing');
   }
 
   /* ----- Typing container ----- */
+  /* The label names the phase the generation is actually in — Flutter pushes
+   * it through bridge.setGenerationPhase() as the run walks from prompt
+   * assembly to streaming. A bubble rendered mid-run (scrollback, re-render)
+   * reads the current label off the bridge so it never rewinds to the
+   * default. */
   _createTypingContainer() {
     const wrap = document.createElement('div');
     wrap.className = 'typing-container';
     wrap.innerHTML = `
       <svg class="typing-icon" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-      <span class="typing-text">Generating...</span>
+      <span class="typing-text"></span>
     `;
+    wrap.querySelector('.typing-text').textContent =
+      window.bridge?.generationPhaseText || DEFAULT_TYPING_TEXT;
     return wrap;
   }
 

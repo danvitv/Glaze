@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
+import '../../core/llm/generation_phase.dart';
 import '../../core/llm/tokenizer.dart';
 import '../../core/models/chat_message.dart';
 import '../../core/db/repositories/lorebook_use_manifest_repo.dart';
@@ -28,6 +29,7 @@ import 'controllers/chat_draft_controller.dart';
 import 'services/generation_pipeline.dart';
 import 'services/impersonation_service.dart';
 import 'state/chat_session_write_queue.dart';
+import 'state/generation_phase_provider.dart';
 import '../extensions/services/extension_post_gen_service.dart';
 
 final chatProvider =
@@ -981,6 +983,12 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
     String? continueTargetId,
   }) {
     final genId = _abortHandler.nextGenId();
+    // The typing bubble is already on screen (isGenerating flipped true just
+    // before this call), so name the phase it is actually in rather than
+    // letting it claim the model is writing while the prompt is still being
+    // assembled. Every later transition is published from the stage that
+    // owns it; the pipeline resets to idle on the way out.
+    setGenerationPhase(ref, arg, GenerationPhase.preparing);
     final pipeline = GenerationPipeline(
       ref: ref,
       charId: arg,

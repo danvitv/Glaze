@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/llm/generation_phase.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/preset.dart';
 import '../../../core/state/active_regex_provider.dart';
@@ -16,6 +17,7 @@ import '../chat_provider.dart';
 import '../chat_state.dart';
 import '../editing_message_provider.dart';
 import '../services/continuation_message_merger.dart';
+import '../state/generation_phase_provider.dart';
 import 'chat_message_sync.dart';
 import 'chat_streaming_bridge_sync.dart';
 import 'chat_webview_sync_dispatcher.dart';
@@ -70,6 +72,7 @@ class ChatWebViewBuildListeners {
   void attach() {
     _listenDisplayRegexes();
     _listenEditingMessage();
+    _listenGenerationPhase();
     _listenStreaming();
     _listenInfoBlocks();
     _listenExtSettingsAndPresets();
@@ -141,6 +144,20 @@ class ChatWebViewBuildListeners {
       if (next != null) {
         b.startEdit(next);
       }
+    });
+  }
+
+  /// Pushes the live generation phase into the typing bubble, so its label
+  /// tracks the work the app is actually doing (assembling the prompt,
+  /// retrieving memory, waiting on the model) instead of claiming the reply
+  /// is being written from the moment the bubble appears.
+  void _listenGenerationPhase() {
+    ref.listen<GenerationPhase>(generationPhaseProvider(charId), (prev, next) {
+      final b = bridge;
+      if (b == null || !ready() || isCurrentBridge?.call(b) == false) return;
+      final label = generationPhaseLabel(next);
+      if (label == b.generationPhaseLabel) return;
+      unawaited(b.setGenerationPhase(label));
     });
   }
 

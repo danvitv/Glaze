@@ -13,6 +13,14 @@ class MessageBridgeCommands {
 
   MessageBridgeCommands(this._host);
 
+  /// Names the stage the running generation is actually in, so the typing
+  /// bubble stops claiming the model is writing while the prompt is still
+  /// being assembled. The page keeps the last label and cross-fades to the
+  /// new one; an empty string restores the default "Generating…" text.
+  Future<void> setGenerationPhase(String label) {
+    return _host.callJs('setGenerationPhase', label);
+  }
+
   Future<void> setMessages(
     List<ChatMessage> messages, {
     int visibleStartIndex = 0,

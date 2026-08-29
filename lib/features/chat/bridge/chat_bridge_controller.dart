@@ -58,6 +58,12 @@ class ChatBridgeController {
   /// streams, so every message map the bridge builds during that window flags
   /// the extended bubble (INV-CM6).
   String? continuationTargetId;
+
+  /// Last generation-phase label pushed to the page ('' = the page's own
+  /// default). Kept here so the listener can skip a redundant eval, the same
+  /// way the isGenerating flags are reconciled against the bridge.
+  String generationPhaseLabel = '';
+
   final Set<String> _coveredMemoryIds = {};
   final Set<String> _pendingMemoryIds = {};
   final Set<String> _draftMemoryIds = {};
@@ -621,6 +627,11 @@ class ChatBridgeController {
     preserveScroll: preserveScroll,
   );
   Future<void> appendMessage(ChatMessage m) => messages.appendMessage(m);
+  Future<void> setGenerationPhase(String label) {
+    generationPhaseLabel = label;
+    return messages.setGenerationPhase(label);
+  }
+
   Future<void> appendMessages(List<ChatMessage> m, {int startIndex = 0}) =>
       messages.appendMessages(m, startIndex: startIndex);
   Future<void> prependMessages(

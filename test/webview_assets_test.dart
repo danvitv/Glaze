@@ -52,6 +52,7 @@ void main() {
   late String imgGenPlaceholderJs;
   late String imgGenTimerJs;
   late String selectionManagerJs;
+  late String typingPhaseJs;
   late String swipeHandlerJs;
   late String glazeSdkJs;
   late String indexHtml;
@@ -94,6 +95,7 @@ void main() {
     messageDocumentJs = _rendererAsset('message_document.js');
     cssSanitizerJs = _bridgeAsset('css_sanitizer.js');
     selectionManagerJs = _bridgeAsset('selection_manager.js');
+    typingPhaseJs = _rendererAsset('typing_phase.js');
     swipeHandlerJs = _bridgeAsset('swipe_gesture_handler.js');
     glazeSdkJs = _asset('glaze_sdk.js');
     indexHtml = _asset('index.html');
@@ -2486,6 +2488,82 @@ void main() {
         reason:
             '_createFooter must delegate to _createGenStat instead of inline DOM construction',
       );
+    });
+  });
+
+  // The typing bubble used to say "Generating..." from the moment it appeared
+  // — through prompt assembly, memory retrieval and the wait for the first
+  // token. The label is now pushed from Flutter as the run advances.
+  group('typing phase label (renderer/typing_phase.js)', () {
+    test('the typing container is not hardcoded to one label', () {
+      // The definition, not the two call sites that render into a body.
+      final idx = rendererMessageJs.indexOf('_createTypingContainer() {');
+      expect(idx, isNot(-1));
+      final body = _extractBlockBody(rendererMessageJs, idx);
+      expect(
+        body,
+        contains('window.bridge?.generationPhaseText'),
+        reason:
+            'a bubble rendered mid-run (scrollback, re-render) must pick up '
+            'the phase already reached, not rewind to the default',
+      );
+      expect(body, contains('DEFAULT_TYPING_TEXT'));
+      expect(
+        body,
+        isNot(contains('>Generating...<')),
+        reason: 'the label is data now, not markup',
+      );
+    });
+
+    test('message renderer imports the phase module', () {
+      expect(rendererMessageJs, contains("'./typing_phase.js'"));
+    });
+
+    test('setGenerationPhase repaints every live typing label', () {
+      expect(bridgeControllerJs, contains('setGenerationPhase(text) {'));
+      final idx = bridgeControllerJs.indexOf('_applyGenerationPhase() {');
+      expect(idx, isNot(-1));
+      final body = _extractBlockBody(bridgeControllerJs, idx);
+      expect(body, contains('.typing-container .typing-text'));
+      expect(body, contains('applyTypingPhase('));
+      expect(
+        body,
+        contains('prefers-reduced-motion'),
+        reason: 'the swap animation must respect the reduced-motion setting',
+      );
+      expect(
+        body,
+        contains('this.batterySaver'),
+        reason: 'battery saver keeps repeated animations off the compositor',
+      );
+    });
+
+    test('a phase that changes mid-swap settles on the newest label', () {
+      final idx = typingPhaseJs.indexOf('export function applyTypingPhase(');
+      expect(idx, isNot(-1));
+      final body = _extractBlockBody(typingPhaseJs, idx);
+      expect(
+        body,
+        contains('clearTimeout(el._phaseTimer)'),
+        reason: 'a second swap must cancel the pending one, not stack on it',
+      );
+      expect(body, contains('_phasePending'));
+      expect(
+        body,
+        contains('DEFAULT_TYPING_TEXT'),
+        reason: 'an empty label falls back to the default text',
+      );
+    });
+
+    test('the swap animation is defined and cancelled with the label swap', () {
+      expect(stylessCss, contains('.typing-text.phase-out'));
+      expect(stylessCss, contains('.typing-text.phase-in'));
+      expect(stylessCss, contains('@keyframes typingPhaseOut'));
+      expect(stylessCss, contains('@keyframes typingPhaseIn'));
+      // The text is replaced when the out-animation ends, so the two
+      // durations have to agree — see SWAP_OUT_MS in typing_phase.js.
+      expect(typingPhaseJs, contains('const SWAP_OUT_MS = 130;'));
+      expect(stylessCss, contains('animation: typingPhaseOut 0.13s'));
     });
   });
 }

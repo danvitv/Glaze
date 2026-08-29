@@ -1,11 +1,13 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/llm/generation_phase.dart';
 import '../../core/models/chat_message.dart';
 import '../../core/state/card_rewriter_providers.dart';
 import '../../core/utils/id_generator.dart';
 import '../extensions/services/extension_post_gen_service.dart';
 import 'chat_provider.dart' show streamingStateProvider;
+import 'state/generation_phase_provider.dart';
 import 'state/post_cleaner_state_provider.dart'
     show PostCleanerState, cleanerCancelTokenProvider, postCleanerStateProvider;
 import 'state/studio_cycle_state_provider.dart';
@@ -125,6 +127,7 @@ class AbortHandler {
         const PostCleanerState.idle();
     clearStreaming();
     clearStudioCycle();
+    setGenerationPhase(_ref, _charId, GenerationPhase.idle);
 
     final current = _getState().value;
     if (current != null && (current.isGenerating || current.isPostGenRunning)) {

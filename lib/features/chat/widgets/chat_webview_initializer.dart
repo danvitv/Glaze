@@ -10,6 +10,7 @@ import '../../../core/state/persona_resolution.dart';
 import '../bridge/chat_bridge_controller.dart';
 import '../bridge/chat_overlay_blur_region.dart';
 import '../chat_provider.dart';
+import '../state/generation_phase_provider.dart';
 
 /// Snapshot of the [ChatWebViewWidget] fields needed by
 /// [ChatWebViewInitializer]. Pure data — no `BuildContext` or
@@ -226,6 +227,14 @@ class ChatWebViewInitializer {
         'window.bridge.setPostGenRunning(${input.isPostGenRunning}); '
         'window.bridge.setImageGenerating(${input.isGeneratingImage}); '
         '}',
+      ),
+    );
+    // A fresh page starts with the default typing label, so re-push the phase
+    // of a run that is already in flight (session switch, WebView reload).
+    // `ref.listen` only fires on transitions and would leave it stale here.
+    unawaited(
+      bridge.setGenerationPhase(
+        generationPhaseLabel(ref.read(generationPhaseProvider(input.charId))),
       ),
     );
     onReady();

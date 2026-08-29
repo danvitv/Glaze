@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/llm/game_time.dart';
+import '../../../core/llm/generation_phase.dart';
 import '../../../core/llm/history_assembler.dart';
 import '../../../core/llm/prompt_isolate.dart';
 import '../../../core/llm/prompt/main_model_context_snapshot.dart';
@@ -41,6 +42,7 @@ import '../chat_provider.dart';
 import '../chat_state.dart';
 import '../providers/prompt_build_providers.dart';
 import '../state/cached_token_breakdown.dart';
+import '../state/generation_phase_provider.dart';
 import '../state/memory_activity_provider.dart';
 import '../state/studio_cycle_state_mapper.dart';
 import '../state/studio_cycle_state_provider.dart';
@@ -64,6 +66,14 @@ class StreamGenerationService {
     required this._genId,
     required this._isAborted,
   });
+
+  /// Publishes the live generation phase for the typing bubble. Never let a
+  /// UI-only signal disturb the run: a stale generation must not overwrite
+  /// the phase a newer one is reporting.
+  void _phase(GenerationPhase phase) {
+    if (_isAborted()) return;
+    setGenerationPhase(_ref, _charId, phase);
+  }
 
   Future<ChatState> run({
     required ChatSession session,
@@ -109,6 +119,7 @@ class StreamGenerationService {
         );
       }
 
+      _phase(GenerationPhase.preparing);
       final builder = _ref.read(promptPayloadBuilderProvider);
       final inputs = await builder.collectGenerationContext(
         charId: _charId,
@@ -121,6 +132,7 @@ class StreamGenerationService {
         includeEffectiveCanon: turnConfig.enabled,
         shouldAbort: _isAborted,
         cancelToken: cancelToken,
+        onPhase: _phase,
       );
       if (_isAborted()) {
         return ChatState(
@@ -151,6 +163,7 @@ class StreamGenerationService {
               historyWindowStartMessageId: inputs
                   .sessionVars[StudioHistoryLimiter.historyWindowStartVar],
             );
+      _phase(GenerationPhase.prompt);
       final payload = studioConfig == null
           ? await builder.buildOrdinaryFromGenerationContext(
               inputs,
@@ -295,11 +308,26 @@ class StreamGenerationService {
           sessionId: session.id,
           totalAgents: studioPreset.agents.length,
         );
+        _phase(GenerationPhase.agents);
         final startGenTime = DateTime.now();
         DateTime? finalStartTime;
         bool studioFrameScheduled = false;
         var latestStudioText = '';
         String? latestStudioReasoning;
+        // Phase reporting only ever moves forward (reasoning-only → visible
+        // text), so it is derived once per transition. The early return keeps
+        // the trim off the hot path once the reply has started: re-deriving
+        // per chunk would scan the whole accumulated text on every delta.
+        var studioReportedPhase = GenerationPhase.waiting;
+        void reportStudioStreamPhase(String visibleText) {
+          if (studioReportedPhase == GenerationPhase.streaming) return;
+          final next = visibleText.trimLeft().isEmpty
+              ? GenerationPhase.reasoning
+              : GenerationPhase.streaming;
+          if (next == studioReportedPhase) return;
+          studioReportedPhase = next;
+          _phase(next);
+        }
         void scheduleStudioStreamingUpdate() {
           if (studioFrameScheduled) return;
           studioFrameScheduled = true;
@@ -326,6 +354,7 @@ class StreamGenerationService {
           cancelToken: cancelToken,
           onFinalStart: () {
             if (_isAborted()) return;
+            _phase(GenerationPhase.waiting);
             final cur = _ref.read(studioCycleStateProvider);
             if (cur.phase == StudioCyclePhase.running) {
               finalStartTime ??= DateTime.now();
@@ -344,6 +373,7 @@ class StreamGenerationService {
             if (_isAborted()) return;
             latestStudioText = text;
             latestStudioReasoning = reasoning;
+            reportStudioStreamPhase(text);
             // Phase transition is handled by onFinalStart above; here we only
             // push the streaming text to the UI. Guard against the rare case
             // where onFinalStart was not wired (e.g. older callers) so the
@@ -548,6 +578,20 @@ class StreamGenerationService {
       ChatState? finalState;
 
       bool frameScheduled = false;
+      // See the Studio branch above: one report per transition, never a
+      // per-chunk re-derivation over the accumulated text.
+      var reportedPhase = GenerationPhase.waiting;
+      void reportStreamPhase() {
+        if (reportedPhase == GenerationPhase.streaming) return;
+        // Cheap while the reply is still empty, and never reached once the
+        // first visible character has landed.
+        final next = accumulator.text.trimLeft().isEmpty
+            ? GenerationPhase.reasoning
+            : GenerationPhase.streaming;
+        if (next == reportedPhase) return;
+        reportedPhase = next;
+        _phase(next);
+      }
 
       // Idle timeout: cancel the timer on the first chunk (text OR reasoning)
       // so a long (but progressing) generation is never cut off. Mirrors
@@ -561,6 +605,7 @@ class StreamGenerationService {
         cancelToken.cancel('First-chunk timeout after ${idleTimeoutMs}ms');
       });
 
+      _phase(GenerationPhase.waiting);
       await transport.stream(
         request: ChatTransportRequest.fromApiConfig(
           apiConfig,
@@ -577,6 +622,9 @@ class StreamGenerationService {
             idleGuard.cancel();
           }
           accumulator.consumeDelta(delta, reasoningDelta: reasoningDelta);
+          // Reasoning-only output keeps the typing bubble on screen (the
+          // visible text is still empty), so name that phase for what it is.
+          reportStreamPhase();
           if (!frameScheduled) {
             frameScheduled = true;
             SchedulerBinding.instance.scheduleFrameCallback((_) {

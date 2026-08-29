@@ -105,6 +105,44 @@ provider disposal is not a cleanup path.
 
 ---
 
+## The typing bubble names the phase, not the wish
+
+`GenerationPhase` (`lib/core/llm/generation_phase.dart`) is the live label
+under the typing pencil. It exists because the bubble used to read
+"Generating…" from the instant it appeared — through context collection,
+memory retrieval, prompt assembly and the whole wait for the first token.
+
+| Phase | Reported by | Covers |
+|-------|-------------|--------|
+| `preparing` | `ChatNotifier._runGeneration`, `PromptPayloadBuilder.collectGenerationContext` | character, persona, API config, history, summary |
+| `retrieving` | `collectGenerationContext` (`onPhase`) | memory candidates + lorebook vector search + message recall, awaited together |
+| `prompt` | `StreamGenerationService` | payload build + `buildPromptInIsolate` |
+| `agents` | `StreamGenerationService` (Studio branch) | tracker cycle before the final writer |
+| `waiting` | `StreamGenerationService` | request sent, no token back yet |
+| `reasoning` / `streaming` | SSE `onUpdate` / Studio `onFinalResponseUpdate` | reasoning-only output vs. visible reply |
+| `finalizing` | `PostGenCoordinator._beginForegroundPostGen` | cleaner, ledger, ext blocks, image tags |
+| `idle` | `GenerationPipeline.run` (`finally`), `AbortHandler` | nothing running — the page falls back to its default label |
+
+Rules:
+
+- **A phase is reported where the work starts, not where it is planned.** A
+  label that runs ahead of the work is the bug this replaced.
+- **Phase writes are scoped to the run.** `StageContext.setPhase` and
+  `StreamGenerationService._phase` drop the write when the genId is no longer
+  current, so a stale run settling late cannot relabel the one that replaced
+  it.
+- **Never derive a phase by scanning accumulated text on every chunk.** The
+  streaming reporters latch (`reportStreamPhase`): one report per transition,
+  never an O(n) trim per delta.
+- Nothing in the pipeline reads the phase — it is a UI signal only, so a
+  missed transition costs a stale label, never a stuck generation.
+
+The label crosses into the WebView through `bridge.setGenerationPhase(label)`
+and is swapped with a cross-fade by `renderer/typing_phase.js`; battery saver
+and `prefers-reduced-motion` swap the text outright.
+
+---
+
 ## Prompt ordering (do not reorder)
 
 1. Vector lorebook scan (async, `PromptPayloadBuilder`, before isolate)
