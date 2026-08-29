@@ -24,7 +24,7 @@ void main() {
           oldMsgs: [greeting],
           newMsgs: [greeting, user],
           visibleStartIndex: 0,
-          isGenerating: true,
+          busy: true,
           sessionSwitching: false,
         );
 
@@ -45,7 +45,7 @@ void main() {
             oldMsgs: [greeting],
             newMsgs: [greeting, user],
             visibleStartIndex: 0,
-            isGenerating: true,
+            busy: true,
             sessionSwitching: false,
           )
           .then((_) => completed = true);
@@ -57,6 +57,45 @@ void main() {
       appendCompleter.complete();
       await sync;
       expect(completed, isTrue);
+    });
+
+    test('withholds Regenerate while the send is still being persisted', () async {
+      // The optimistic user bubble is a tail append and the durable append can
+      // take a while on a long chat. Stamping the Regenerate button there put
+      // it under the message for that whole window, then took it away again
+      // the moment `isGenerating` went up — a visible flash on every send.
+      final bridge = _FakeBridge();
+      final greeting = _assistant('a1');
+      final user = _user('u1');
+
+      await const ChatMessageSync().sync(
+        bridge: bridge,
+        oldMsgs: [greeting],
+        newMsgs: [greeting, user],
+        visibleStartIndex: 0,
+        busy: true,
+        sessionSwitching: false,
+      );
+
+      expect(bridge.appendedMessages, [user]);
+      expect(bridge.lastMessageIds, isEmpty);
+    });
+
+    test('stamps Regenerate on a trailing user message once idle', () async {
+      final bridge = _FakeBridge();
+      final greeting = _assistant('a1');
+      final user = _user('u1');
+
+      await const ChatMessageSync().sync(
+        bridge: bridge,
+        oldMsgs: [greeting],
+        newMsgs: [greeting, user],
+        visibleStartIndex: 0,
+        busy: false,
+        sessionSwitching: false,
+      );
+
+      expect(bridge.lastMessageIds, ['u1']);
     });
 
     test('sends a time-only metadata update to the WebView', () async {
@@ -71,7 +110,7 @@ void main() {
         oldMsgs: [oldMessage],
         newMsgs: [updated],
         visibleStartIndex: 0,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -449,6 +488,64 @@ void main() {
       expect(bridge.evalCalls.single, contains('setGenerating(false)'));
     });
 
+    test('restores Regenerate when a send ends without generating', () {
+      // A send that loses ownership after the durable append (session changed,
+      // or another run started meanwhile) clears isSendPending without
+      // touching the message list, so the diff pass never re-issues
+      // setLastMessage. Without this edge the button stays missing.
+      final bridge = _FakeBridge();
+      final greeting = _assistant('a1');
+      final user = _user('u1');
+      final dispatcher = ChatWebViewSyncDispatcher(
+        state: ChatWebViewSyncState(),
+      );
+
+      dispatcher.dispatch(
+        bridge: bridge,
+        old: _fields(
+          isGenerating: false,
+          isSendPending: true,
+          messages: [greeting, user],
+        ),
+        current: _fields(isGenerating: false, messages: [greeting, user]),
+        oldMessages: [greeting, user],
+        newMessages: [greeting, user],
+        streamingId: '__streaming__',
+        onSyncExtBlockPanels: () async {},
+        appendMessage: (_) async {},
+        buildStreamingPlaceholder: () => _assistant('__streaming__'),
+      );
+
+      expect(bridge.lastMessageIds, ['u1']);
+    });
+
+    test('does not restore Regenerate when the send hands off to a run', () {
+      final bridge = _FakeBridge();
+      final greeting = _assistant('a1');
+      final user = _user('u1');
+      final dispatcher = ChatWebViewSyncDispatcher(
+        state: ChatWebViewSyncState(),
+      );
+
+      dispatcher.dispatch(
+        bridge: bridge,
+        old: _fields(
+          isGenerating: false,
+          isSendPending: true,
+          messages: [greeting, user],
+        ),
+        current: _fields(isGenerating: true, messages: [greeting, user]),
+        oldMessages: [greeting, user],
+        newMessages: [greeting, user],
+        streamingId: '__streaming__',
+        onSyncExtBlockPanels: () async {},
+        appendMessage: (_) async {},
+        buildStreamingPlaceholder: () => _assistant('__streaming__'),
+      );
+
+      expect(bridge.lastMessageIds, [null]);
+    });
+
     test('continuation flags its target instead of adding a placeholder', () {
       // A continuation extends an existing bubble; a typing placeholder would
       // show the reply as its own block that collapses into the original once
@@ -577,6 +674,7 @@ ChatWebViewWidgetFields _fields({
   String charId = 'c1',
   String? sessionId = 's1',
   bool isPostGenRunning = false,
+  bool isSendPending = false,
   String? continuationTargetId,
   List<ChatOverlayBlurRegion> blurRegions = const [],
   List<dynamic> memoryDrafts = const [],
@@ -585,6 +683,7 @@ ChatWebViewWidgetFields _fields({
   int searchRevision = 0,
 }) => ChatWebViewWidgetFields(
   continuationTargetId: continuationTargetId,
+  isSendPending: isSendPending,
   blurRegions: blurRegions,
   charId: charId,
   charName: 'Character',

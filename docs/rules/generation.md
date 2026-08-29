@@ -105,6 +105,30 @@ provider disposal is not a cleanup path.
 
 ---
 
+## The send window is busy, even though nothing is generating
+
+`sendMessage` paints the user's bubble optimistically and only publishes
+`isGenerating` once the message is durably appended — that ordering is
+deliberate (the assistant placeholder must never precede the message it
+answers). `ChatState.isSendPending` marks that gap so the UI can tell "idle"
+from "the reply is already on its way".
+
+- **Treat it as busy wherever `isGenerating` gates a UI affordance.** It is why
+  `ChatMessageSync.sync` takes `busy` rather than `isGenerating`: the
+  optimistic bubble is a tail append, and stamping the Regenerate button there
+  flashed one under the message for the whole durable write.
+- **Never branch generation on it.** Nothing in the pipeline reads it, so a
+  leaked `true` can only withhold that button — it can never block or start a
+  run. The sweep in `_sendMessage`'s `finally` is scoped by `_sendPendingSeq`
+  so a settling send cannot clear a newer send's flag.
+- **Work that does not gate the placeholder belongs after the `isGenerating`
+  publish.** The accepted-variation commit (`_commitAcceptedVariation`) is
+  three DB round-trips; in front of the publish it delayed the typing bubble by
+  their full cost on every send. It still runs before `_runGeneration`, which
+  is the ordering prompt assembly actually depends on.
+
+---
+
 ## The typing bubble names the phase, not the wish
 
 `GenerationPhase` (`lib/core/llm/generation_phase.dart`) is the live label

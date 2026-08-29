@@ -30,8 +30,13 @@ class ChatMessageSync {
   /// the diff.
   /// [visibleStartIndex] is forwarded to `setMessages` / `prependMessages`
   /// for the scrollback window.
-  /// [isGenerating] controls whether `setLastMessage` is called after
-  /// a tail append (only when generation has settled).
+  /// [busy] suppresses `setLastMessage`, whose only job is to stamp the
+  /// Regenerate button under a trailing user message. That button belongs to
+  /// an idle chat: a reply already on its way is not idle. It covers the
+  /// streaming window (`isGenerating`) *and* the send window before it
+  /// (`ChatState.isSendPending`) — the optimistic user bubble is a tail
+  /// append, so gating on `isGenerating` alone flashed a Regenerate button
+  /// under the message for as long as the durable append took.
   /// [sessionSwitching] short-circuits the diff entirely so a session
   /// switch can complete its full reset.
   Future<void> sync({
@@ -39,7 +44,7 @@ class ChatMessageSync {
     required List<ChatMessage> oldMsgs,
     required List<ChatMessage> newMsgs,
     required int visibleStartIndex,
-    required bool isGenerating,
+    required bool busy,
     required bool sessionSwitching,
   }) async {
     if (sessionSwitching) return;
@@ -51,7 +56,7 @@ class ChatMessageSync {
 
     if (oldIds.isEmpty) {
       await bridge.setMessages(newMsgs, visibleStartIndex: visibleStartIndex);
-      if (!isGenerating) {
+      if (!busy) {
         await bridge.setLastMessage(
           lastUserMessageId(newMsgs) ?? newMsgs.lastOrNull?.id,
         );
@@ -80,7 +85,7 @@ class ChatMessageSync {
           appends,
           startIndex: visibleStartIndex + oldIds.length,
         );
-        if (appends.isNotEmpty && !isGenerating) {
+        if (appends.isNotEmpty && !busy) {
           await bridge.setLastMessage(
             lastUserMessageId(appends) ?? newMsgs.lastOrNull?.id,
           );
@@ -102,7 +107,7 @@ class ChatMessageSync {
         for (final id in removed) {
           await bridge.removeMessage(id);
         }
-        if (!isGenerating) {
+        if (!busy) {
           await bridge.setLastMessage(
             lastUserMessageId(newMsgs) ?? newMsgs.lastOrNull?.id,
           );
@@ -111,7 +116,7 @@ class ChatMessageSync {
       }
       await bridge.clearAll();
       await bridge.setMessages(newMsgs, visibleStartIndex: visibleStartIndex);
-      if (!isGenerating) {
+      if (!busy) {
         await bridge.setLastMessage(
           lastUserMessageId(newMsgs) ?? newMsgs.lastOrNull?.id,
         );
@@ -126,7 +131,7 @@ class ChatMessageSync {
       if (newIds[i] != oldIds[i]) {
         await bridge.clearAll();
         await bridge.setMessages(newMsgs, visibleStartIndex: visibleStartIndex);
-        if (!isGenerating) {
+        if (!busy) {
           await bridge.setLastMessage(
             lastUserMessageId(newMsgs) ?? newMsgs.lastOrNull?.id,
           );
@@ -190,7 +195,7 @@ class ChatMessageSync {
     // because the WebView footer/regen controls are not re-rendered by
     // `updateMessage`. The previous dispatcher call relied on a
     // changing isGenerating flag, which does not move on edit.
-    if (anyUpdated && !isGenerating) {
+    if (anyUpdated && !busy) {
       await bridge.setLastMessage(
         lastUserMessageId(newMsgs) ?? newMsgs.lastOrNull?.id,
       );

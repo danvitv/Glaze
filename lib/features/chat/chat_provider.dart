@@ -70,6 +70,11 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
   final String arg;
   bool _buildComplete = false;
   bool _sendInFlight = false;
+
+  /// Bumped by every send that paints optimistically, so the sweep in that
+  /// send's `finally` can tell its own [ChatState.isSendPending] from one a
+  /// later send has since set.
+  int _sendPendingSeq = 0;
   int _sessionChangesInFlight = 0;
 
   /// Reflects the active session's generation state into
@@ -472,6 +477,9 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
       return;
     }
     _sendInFlight = true;
+    // Claimed before the try so the `finally` sweep can see it. Bumped here
+    // rather than at the optimistic paint: the claim order is the tap order.
+    final sendPendingToken = ++_sendPendingSeq;
 
     try {
       final userMsg = ChatMessage(
@@ -499,12 +507,20 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
       // state (and therefore the assistant placeholder) until the user message
       // has been durably appended. This preserves the visual and durable causal
       // order even when a long chat takes time to encode and persist.
+      //
+      // `isSendPending` covers exactly that gap: the bubble is on screen, the
+      // reply is on its way, and the WebView must not stamp a Regenerate
+      // button under a message it is about to answer. Cleared atomically with
+      // the `isGenerating` publish below, and swept in this method's `finally`
+      // for the paths that return before ever reaching it.
       final optimisticSession = current.session!.copyWith(
         messages: [...current.messages, userMsg],
         draft: '',
         updatedAt: currentTimestampSeconds(),
       );
-      state = AsyncData(current.copyWith(session: optimisticSession));
+      state = AsyncData(
+        current.copyWith(session: optimisticSession, isSendPending: true),
+      );
       await _yieldToFrame();
       if (!ref.mounted) return;
 
@@ -536,34 +552,6 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
       if (durableAcceptance != null && !durableAcceptance.isCompleted) {
         durableAcceptance.complete(true);
       }
-      // Commit the exact visible green/blue swipe, never whichever Ledger call
-      // happened to finish most recently.
-      final snapshotRepo = ref.read(trackerSnapshotRepoProvider);
-      final committedSnapshot = acceptedAssistant == null
-          ? null
-          : await snapshotRepo.getByAnchor(
-              sessionId: current.session!.id,
-              messageId: acceptedAssistant.id,
-              swipeId: acceptedAssistant.swipeId,
-              agentSwipeId: acceptedAssistant.agentSwipeId,
-            );
-      if (committedSnapshot != null) {
-        await snapshotRepo.commit(
-          sessionId: committedSnapshot.sessionId,
-          messageId: committedSnapshot.messageId,
-          swipeId: committedSnapshot.swipeId,
-          agentSwipeId: committedSnapshot.agentSwipeId,
-        );
-        await ref
-            .read(characterKnowledgeFactRepoProvider)
-            .activateAnchor(
-              sessionId: current.session!.id,
-              messageId: committedSnapshot.messageId,
-              swipeId: committedSnapshot.swipeId,
-              agentSwipeId: committedSnapshot.agentSwipeId,
-            );
-      }
-      if (!ref.mounted) return;
       ChatSessionService.updateCache(updatedSession);
       _invalidateHistory();
       final afterWrite = state.value;
@@ -579,6 +567,7 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
         afterWrite.copyWith(
           session: updatedSession,
           isGenerating: true,
+          isSendPending: false,
           generationStartTime: DateTime.now(),
         ),
       );
@@ -589,6 +578,20 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
       unawaited(_dispatchAfterUserBlocks(updatedSession));
 
       try {
+        // Commit the exact visible green/blue swipe, never whichever Ledger
+        // call happened to finish most recently.
+        //
+        // Deliberately after the `isGenerating` publish: these are three more
+        // DB round-trips, and the typing bubble is injected off that flag, so
+        // running them in front of it delayed the bubble by their full cost on
+        // every send. They still run before `_runGeneration`, which is the
+        // ordering that matters — prompt assembly reads the committed snapshot
+        // and the activated facts. Inside this `try` so a failure settles the
+        // generation state it now runs behind, instead of escaping with
+        // `isGenerating` stuck true.
+        await _commitAcceptedVariation(current.session!.id, acceptedAssistant);
+        if (!ref.mounted) return;
+
         final charRepo = ref.read(characterRepoProvider);
         final character = await charRepo.getById(arg);
         if (!ref.mounted) return;
@@ -631,7 +634,56 @@ class ChatNotifier extends AsyncNotifier<ChatState> {
         durableAcceptance.complete(false);
       }
       _sendInFlight = false;
+      _clearSendPending(sendPendingToken);
     }
+  }
+
+  /// Drops [ChatState.isSendPending] if [token]'s send still owns it. The
+  /// normal path clears the flag atomically with the `isGenerating` publish;
+  /// this covers the returns that never get there (session gone, ownership
+  /// lost, a throw) so the Regenerate button cannot stay withheld for the rest
+  /// of the session. A newer send owns a newer token and is left alone.
+  void _clearSendPending(int token) {
+    if (token != _sendPendingSeq) return;
+    if (!ref.mounted) return;
+    final latest = state.value;
+    if (latest == null || !latest.isSendPending) return;
+    state = AsyncData(latest.copyWith(isSendPending: false));
+  }
+
+  /// Records that the assistant variation the user was looking at when they
+  /// sent is the accepted one: commits its tracker snapshot and activates the
+  /// knowledge facts anchored to it. No-op when the send had no preceding
+  /// assistant message, or when that variation carries no snapshot.
+  Future<void> _commitAcceptedVariation(
+    String sessionId,
+    ChatMessage? acceptedAssistant,
+  ) async {
+    if (acceptedAssistant == null) return;
+    final snapshotRepo = ref.read(trackerSnapshotRepoProvider);
+    final committedSnapshot = await snapshotRepo.getByAnchor(
+      sessionId: sessionId,
+      messageId: acceptedAssistant.id,
+      swipeId: acceptedAssistant.swipeId,
+      agentSwipeId: acceptedAssistant.agentSwipeId,
+    );
+    if (committedSnapshot == null) return;
+    if (!ref.mounted) return;
+    await snapshotRepo.commit(
+      sessionId: committedSnapshot.sessionId,
+      messageId: committedSnapshot.messageId,
+      swipeId: committedSnapshot.swipeId,
+      agentSwipeId: committedSnapshot.agentSwipeId,
+    );
+    if (!ref.mounted) return;
+    await ref
+        .read(characterKnowledgeFactRepoProvider)
+        .activateAnchor(
+          sessionId: sessionId,
+          messageId: committedSnapshot.messageId,
+          swipeId: committedSnapshot.swipeId,
+          agentSwipeId: committedSnapshot.agentSwipeId,
+        );
   }
 
   /// Waits for the pending frame to be built before returning, so an

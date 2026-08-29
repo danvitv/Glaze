@@ -55,6 +55,11 @@ class ChatWebViewWidget extends ConsumerStatefulWidget {
   final bool isGenerating;
   final bool isGeneratingImage;
   final bool isPostGenRunning;
+
+  /// Mirrors [ChatState.isSendPending] — a send is painted but its generation
+  /// has not been published yet. Treated as busy wherever [isGenerating] is,
+  /// so the just-sent user message does not flash a Regenerate button.
+  final bool isSendPending;
   final double bottomInset;
 
   /// Height of the box this WebView is laid out in. Pushed alongside
@@ -149,6 +154,7 @@ class ChatWebViewWidget extends ConsumerStatefulWidget {
     required this.isGenerating,
     this.isGeneratingImage = false,
     this.isPostGenRunning = false,
+    this.isSendPending = false,
     this.bottomInset = 0,
     this.viewportHeight = 0,
     this.topInset = 0,
@@ -589,7 +595,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
         oldMsgs: const <ChatMessage>[],
         newMsgs: widget.messages,
         visibleStartIndex: widget.visibleStartIndex,
-        isGenerating: widget.isGenerating,
+        busy: widget.isGenerating || widget.isSendPending,
         sessionSwitching: false,
       ),
       label: 'resyncMessagesAfterInit',
@@ -914,6 +920,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
       isGenerating: w.isGenerating,
       isGeneratingImage: w.isGeneratingImage,
       isPostGenRunning: w.isPostGenRunning,
+      isSendPending: w.isSendPending,
       regenTargetId: w.regenTargetId,
       continuationTargetId: w.continuationTargetId,
       greetingTotal: w.greetingTotal,
@@ -980,7 +987,9 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
     final oldMessages = oldWidget.messages;
     final newMessages = widget.messages;
     final visibleStartIndex = widget.visibleStartIndex;
-    final isGenerating = widget.isGenerating;
+    // The Regenerate button belongs to an idle chat, and a send whose reply is
+    // still being persisted is not idle — see ChatMessageSync.sync's [busy].
+    final busy = widget.isGenerating || widget.isSendPending;
     final sessionSwitching = _sessionSwitching;
     if (result.runMessageSync) unawaited(_syncExtBlockPanels());
     if (bridge != null &&
@@ -1009,7 +1018,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
                 oldMessages,
                 newMessages: newMessages,
                 visibleStartIndex: visibleStartIndex,
-                isGenerating: isGenerating,
+                busy: busy,
                 sessionSwitching: sessionSwitching,
                 bridge: bridge,
               );
@@ -1060,7 +1069,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
     List<ChatMessage> oldMsgs, {
     required List<ChatMessage> newMessages,
     required int visibleStartIndex,
-    required bool isGenerating,
+    required bool busy,
     required bool sessionSwitching,
     required ChatBridgeController? bridge,
   }) {
@@ -1069,7 +1078,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
       oldMsgs: oldMsgs,
       newMsgs: newMessages,
       visibleStartIndex: visibleStartIndex,
-      isGenerating: isGenerating,
+      busy: busy,
       sessionSwitching: sessionSwitching,
     );
   }
