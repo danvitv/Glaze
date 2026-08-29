@@ -17,7 +17,7 @@ void main() {
         oldMsgs: [a, u, b],
         newMsgs: [a, b],
         visibleStartIndex: 0,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -38,7 +38,7 @@ void main() {
         oldMsgs: msgs,
         newMsgs: [msgs[0], msgs[3], msgs[5]],
         visibleStartIndex: 0,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -55,7 +55,7 @@ void main() {
         oldMsgs: msgs,
         newMsgs: msgs.sublist(2),
         visibleStartIndex: 2,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -74,7 +74,7 @@ void main() {
         oldMsgs: msgs,
         newMsgs: [msgs[1], msgs[2], msgs[4], msgs[5]],
         visibleStartIndex: 1,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -96,7 +96,7 @@ void main() {
         oldMsgs: [a1, u1, a2, u2],
         newMsgs: [a1, a2, u1],
         visibleStartIndex: 0,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 
@@ -115,7 +115,7 @@ void main() {
         oldMsgs: [_msg('a1', 'assistant'), _msg('u1', 'user')],
         newMsgs: [_msg('x9', 'assistant')],
         visibleStartIndex: 0,
-        isGenerating: false,
+        busy: false,
         sessionSwitching: false,
       );
 

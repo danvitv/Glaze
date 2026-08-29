@@ -19,6 +19,7 @@ import '../state/lorebook_embedding_provider.dart';
 import '../state/lorebook_provider.dart';
 import '../state/memory_settings_provider.dart';
 import '../state/summary_providers.dart';
+import 'generation_phase.dart';
 import 'memory_injection_service.dart';
 import 'memory_retrieval_mode.dart';
 import 'game_time.dart';
@@ -155,6 +156,7 @@ class PromptPayloadBuilder {
     bool allowRemoteRetrieval = true,
     bool Function()? shouldAbort,
     CancelToken? cancelToken,
+    void Function(GenerationPhase)? onPhase,
   }) async {
     void throwIfAborted() {
       if (shouldAbort?.call() == true) {
@@ -163,6 +165,7 @@ class PromptPayloadBuilder {
     }
 
     throwIfAborted();
+    onPhase?.call(GenerationPhase.preparing);
     final charRepo = _ref.read(characterRepoProvider);
     final personaRepo = _ref.read(personaRepoProvider);
     final lorebookRepo = _ref.read(lorebookRepoProvider);
@@ -338,6 +341,7 @@ class PromptPayloadBuilder {
           : Future.value(const MessageRecallResult());
 
       throwIfAborted();
+      onPhase?.call(GenerationPhase.retrieving);
       final results = await Future.wait([
         memoryFuture,
         lorebookFuture,

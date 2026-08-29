@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/llm/generation_phase.dart';
 import '../../../core/models/character.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/db/repositories/lorebook_use_manifest_repo.dart';
@@ -358,6 +359,9 @@ class GenerationPipeline {
       await _handlePipelineError(e, genId, continueTargetId: continueTargetId);
       return null;
     } finally {
+      // The run is over on every exit path — success, error, or a stale genId
+      // (where setPhase is a no-op, so the newer run keeps its own label).
+      ctx.setPhase(GenerationPhase.idle, genId: genId);
       await notificationLease?.release();
     }
   }

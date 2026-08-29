@@ -13,6 +13,7 @@ import { PanelHost } from './panel_host.js';
 import { sanitizeExtBlockHtml } from './html_sanitizer.js';
 import { parseImageResultElement } from '../formatter/formatter.js';
 import { ICON } from '../renderer/icon_library.js';
+import { applyTypingPhase } from '../renderer/typing_phase.js';
 
 export class Bridge {
   constructor(renderer, virtualList) {
@@ -23,6 +24,9 @@ export class Bridge {
     this.isGenerating = false;
     this.isGeneratingImage = false;
     this.isPostGenRunning = false;
+    // Label under the typing pencil, naming the phase the generation is
+    // actually in. Empty = the renderer's default. See setGenerationPhase().
+    this.generationPhaseText = '';
     // Scroll-hide header state. Lifted out of the _setupScrollListener closure
     // so the rest of the controller can reach it: _ensureHeaderReachable()
     // un-hides the header when the list shrinks out of scroll range, and
@@ -127,6 +131,29 @@ export class Bridge {
         if (existingImg) existingImg.remove();
         avatar.textContent = (newName.charAt(0) || '?').toUpperCase();
       }
+    });
+  }
+
+  /* Names the phase of the running generation in the typing bubble. Called
+   * from Flutter on every transition (prompt assembly -> retrieval -> waiting
+   * on the model -> streaming -> post-gen), and with an empty string when the
+   * run ends so the next bubble starts from the default label instead of the
+   * last phase of the previous turn. */
+  setGenerationPhase(text) {
+    const next = typeof text === 'string' ? text : '';
+    if (next === this.generationPhaseText) return;
+    this.generationPhaseText = next;
+    this._applyGenerationPhase();
+  }
+
+  /* A typing bubble is only ever on screen for the live generation, so every
+   * `.typing-text` currently rendered belongs to this phase. */
+  _applyGenerationPhase() {
+    const reduceMotion = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const animate = !this.batterySaver && !reduceMotion;
+    document.querySelectorAll('.typing-container .typing-text').forEach((el) => {
+      applyTypingPhase(el, this.generationPhaseText, animate);
     });
   }
 

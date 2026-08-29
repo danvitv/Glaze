@@ -1139,6 +1139,34 @@
 }
 .typing-text { font-size: 0.9em; }
 
+/* Phase label swap: the old phase drops away, the new one rises in. Keep
+ * .phase-out's duration in sync with SWAP_OUT_MS in renderer/typing_phase.js —
+ * the text is replaced when that animation ends. */
+.typing-text.phase-out {
+  animation: typingPhaseOut 0.13s ease-in both;
+}
+.typing-text.phase-in {
+  animation: typingPhaseIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes typingPhaseOut {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(3px); }
+}
+@keyframes typingPhaseIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Battery saver swaps the label outright (see _applyGenerationPhase), and
+ * reduced-motion asks for the same. */
+.battery-saver .typing-text.phase-out,
+.battery-saver .typing-text.phase-in {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .typing-text.phase-out,
+  .typing-text.phase-in { animation: none; }
+}
+
 .typing-dots-bounce {
   display: inline-block;
   margin-left: 4px;

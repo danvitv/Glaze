@@ -1405,6 +1405,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
                         isGenerating: widget.state.isGenerating,
                         isGeneratingImage: widget.state.isGeneratingImage,
                         isPostGenRunning: widget.state.isPostGenRunning,
+                        isSendPending: widget.state.isSendPending,
                         regenTargetId: widget.state.regenTargetId,
                         continuationTargetId: widget.state.continuationTargetId,
                         bottomInset: webViewBottomInset,

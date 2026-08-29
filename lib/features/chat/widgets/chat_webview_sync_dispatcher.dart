@@ -140,6 +140,7 @@ class ChatWebViewSyncDispatcher {
     _maybeApplyInsets(bridge: bridge, old: old, current: current);
 
     _maybeApplyGeneratingState(bridge: bridge, old: old, current: current);
+    _maybeRestoreRegenerateAfterSend(bridge: bridge, old: old, current: current);
 
     // Level-reconcile the native-side streaming flags too. If the previous
     // generation's falling edge was missed while the WebView was not ready or
@@ -412,6 +413,32 @@ class ChatWebViewSyncDispatcher {
     }
   }
 
+  /// Restores the Regenerate button when the send window closes without a
+  /// generation taking over.
+  ///
+  /// `ChatMessageSync` withholds `setLastMessage` for the whole send window
+  /// (see its [busy] parameter). A send that loses ownership after the durable
+  /// append — the session changed, or another run started meanwhile — clears
+  /// `isSendPending` without touching the message list, so the diff pass that
+  /// would otherwise re-issue `setLastMessage` never runs and the button would
+  /// stay missing until the next edit or generation.
+  void _maybeRestoreRegenerateAfterSend({
+    required ChatBridgeController bridge,
+    required ChatWebViewWidgetFields old,
+    required ChatWebViewWidgetFields current,
+  }) {
+    if (!old.isSendPending || current.isSendPending) return;
+    if (current.isGenerating ||
+        current.isGeneratingImage ||
+        current.isPostGenRunning) {
+      return;
+    }
+    if (current.messages.isEmpty) return;
+    bridge.setLastMessage(
+      lastUserMessageId(current.messages) ?? current.messages.last.id,
+    );
+  }
+
   /// Reconcile the WebView's stream and post-generation state
   /// **level-triggered**, not edge-triggered. The two flags deliberately stay
   /// separate: message controls use the stream flag to distinguish a live
@@ -589,6 +616,7 @@ class ChatWebViewWidgetFields {
     required this.isGenerating,
     required this.isGeneratingImage,
     required this.isPostGenRunning,
+    this.isSendPending = false,
     required this.regenTargetId,
     this.continuationTargetId,
     required this.greetingTotal,
@@ -654,6 +682,10 @@ class ChatWebViewWidgetFields {
   final bool isGenerating;
   final bool isGeneratingImage;
   final bool isPostGenRunning;
+
+  /// Mirrors [ChatState.isSendPending]: the user's bubble is painted but the
+  /// generation it starts has not been published yet.
+  final bool isSendPending;
   final String? regenTargetId;
 
   /// Id of the assistant message a continuation run extends, or null.
