@@ -6,6 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:drift/drift.dart' as drift;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:glaze_flutter/core/db/app_db.dart';
@@ -1316,6 +1317,69 @@ void main() {
       await expectLater(writeAndImport(archive, db, imageStorage), completes);
     });
 
+    test('imports a table whose rows span several write chunks', () async {
+      // Rows are inserted 500 at a time, so a table that does not end on a
+      // chunk boundary only lands completely if the tail chunk is written.
+      const rowCount = 1200;
+      final archive = buildGlzArchive();
+      archive.addFile(
+        ArchiveFile.bytes(
+          'tables/characters.jsonl',
+          utf8.encode([
+            for (var i = 0; i < rowCount; i++)
+              jsonEncode({'char_id': 'char_$i', 'name': 'Card $i'}),
+          ].join('\n')),
+        ),
+      );
+
+      await writeAndImport(archive, db, imageStorage);
+
+      final rows = await db.select(db.characters).get();
+      expect(rows.length, rowCount);
+      expect(rows.map((r) => r.charId), contains('char_1199'));
+    });
+
+    test('imports a table too big to hold in memory', () async {
+      // Past 8 MB the entry is decompressed to a temp file and read back from
+      // disk instead of being materialised; the rows must be identical either
+      // way, and the temp file must not survive the import.
+      final filler = 'x' * 12000;
+      const rowCount = 800;
+      final archive = buildGlzArchive();
+      archive.addFile(
+        ArchiveFile.bytes(
+          'tables/characters.jsonl',
+          utf8.encode([
+            for (var i = 0; i < rowCount; i++)
+              jsonEncode({
+                'char_id': 'big_$i',
+                'name': 'Big $i',
+                'description': filler,
+              }),
+          ].join('\n')),
+        ),
+      );
+
+      final tempBefore = Directory.systemTemp
+          .listSync()
+          .where((e) => p.basename(e.path).startsWith('glaze_restore_'))
+          .length;
+
+      await writeAndImport(archive, db, imageStorage);
+
+      final rows = await db.select(db.characters).get();
+      expect(rows.length, rowCount);
+      expect(rows.first.description, filler);
+      expect(
+        Directory.systemTemp
+            .listSync()
+            .where((e) => p.basename(e.path).startsWith('glaze_restore_'))
+            .length,
+        tempBefore,
+        reason: 'the spill file should be deleted once the table is imported',
+      );
+    });
+
     test('overwrites existing prefs with values from backup', () async {
       final sp = await SharedPreferences.getInstance();
       await sp.setString('theme_active_preset', 'old-preset');
@@ -1377,6 +1441,51 @@ void main() {
           isTrue,
           reason: 'errors were: ${result.errors}',
         );
+      } finally {
+        try {
+          File(fixturePath).deleteSync();
+        } catch (_) {}
+      }
+    });
+
+    test('writes every lorebook when the selection spans several write '
+        'chunks', () async {
+      // Entries are written in chunks of 20, so a run that does not end on a
+      // chunk boundary only lands completely if the tail is flushed.
+      const bookCount = 25;
+      final archive = Archive();
+      for (var i = 0; i < bookCount; i++) {
+        archive.addFile(
+          ArchiveFile.bytes(
+            'worlds/book_$i.json',
+            utf8.encode(
+              jsonEncode({
+                'entries': {
+                  '0': {
+                    'uid': 0,
+                    'key': ['key_$i'],
+                    'content': 'content_$i',
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+      }
+
+      final fixturePath =
+          '${Directory.systemTemp.path}/st_books_${DateTime.now().microsecondsSinceEpoch}.zip';
+      File(fixturePath).writeAsBytesSync(ZipEncoder().encode(archive));
+
+      try {
+        final result = await StBackupImporter(
+          db,
+          imageStorage,
+        ).importFromFile(fixturePath);
+
+        expect(result.errors, isEmpty);
+        expect(result.lorebooks, bookCount);
+        expect((await db.select(db.lorebooks).get()).length, bookCount);
       } finally {
         try {
           File(fixturePath).deleteSync();

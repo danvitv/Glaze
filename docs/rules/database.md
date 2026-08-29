@@ -347,6 +347,41 @@ Do not poll; use Drift streams.
 
 ---
 
+## Bulk writes: one transaction, one emission
+
+Never write a batch of rows one `put` at a time. Every write wakes the reactive
+queries behind it, and a notifier that answers with `invalidateSelf()` then
+re-reads (and re-decodes) the whole table — so N rows cost O(N²) work on the UI
+isolate. That is what made a mass character import freeze and then run out of
+memory.
+
+Write batches through the repo's batch method (`CharacterRepo.putAll`,
+`LorebookRepo.putAll`, `CharacterRepo.setHiddenMany`) and refresh once:
+
+```dart
+// NEVER (a loop over an import selection):
+for (final character in imported) {
+  await charactersNotifier.add(character); // put + invalidateSelf, per row
+}
+
+// ALWAYS:
+await charactersNotifier.addAll(imported); // one batch, one refresh
+```
+
+Long-running loops that produce those batches must also stay serial and yield
+(`await Future<void>.delayed(Duration.zero)`) between items, and must
+materialise one item's bytes at a time — see
+`CharacterBulkImportService` / `CharacterImportWriteBuffer`.
+
+The same applies to a restore: never queue a whole table into one `db.batch`.
+`FlutterBackupImporter` streams `tables/*.jsonl` line by line (spilling an entry
+past 8 MB to a temp file first) and writes 500 rows per batch, so peak memory
+does not scale with table size. The trade-off is deliberate: a table is no
+longer written atomically, which is fine because the restore truncates it first
+and a cancelled restore is re-run from scratch.
+
+---
+
 ## MemoryBook compatibility cleanup (v66)
 
 `MemoryBookRows.entriesJson` and `pendingDraftsJson` are JSON TEXT blobs, so
