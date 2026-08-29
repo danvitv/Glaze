@@ -63,8 +63,17 @@ class _AgenticReconcilerTabState extends ConsumerState<AgenticReconcilerTab> {
     return null;
   }
 
-  Future<void> _runReconciliation() async {
+  Future<void> _runReconciliation({required bool hasMissingLedger}) async {
     if (_runningReconciliation) return;
+    if (hasMissingLedger) {
+      GlazeToast.show(
+        context,
+        'agent_ops_missing_ledger_blocks_reconciliation'.tr(),
+        isError: true,
+        position: ToastPosition.top,
+      );
+      return;
+    }
     setState(() => _runningReconciliation = true);
     try {
       final outcome = await ref
@@ -99,16 +108,27 @@ class _AgenticReconcilerTabState extends ConsumerState<AgenticReconcilerTab> {
     }
   }
 
-  Future<void> _rerunLedger() async {
+  Future<void> _rerunLedger({required bool missingEndpoint}) async {
     if (_runningLedger) return;
-    final target = await _latestAssistant();
-    if (target == null || !mounted) return;
+    if (missingEndpoint) {
+      GlazeToast.show(
+        context,
+        'agent_ops_missing_ledger_recovery_started'.tr(),
+        isError: true,
+        position: ToastPosition.top,
+      );
+    }
     setState(() => _runningLedger = true);
     try {
-      final outcome = await ref
-          .read(manualStudioLedgerServiceProvider)
-          .rerun(sessionId: widget.sessionId, target: target);
-      if (!mounted) return;
+      final service = ref.read(manualStudioLedgerServiceProvider);
+      final outcome = missingEndpoint
+          ? await service.rerunMissingForReconciliation(widget.sessionId)
+          : await (() async {
+              final target = await _latestAssistant();
+              if (target == null) return null;
+              return service.rerun(sessionId: widget.sessionId, target: target);
+            })();
+      if (outcome == null || !mounted) return;
       final result = outcome.result;
       GlazeToast.show(
         context,
@@ -288,7 +308,10 @@ class _AgenticReconcilerTabState extends ConsumerState<AgenticReconcilerTab> {
                                   !_runningLedger &&
                                   !_runningReconciliation &&
                                   _regeneratingRunId == null
-                              ? _runReconciliation
+                              ? () => _runReconciliation(
+                                  hasMissingLedger:
+                                      data.missingLedgerTarget != null,
+                                )
                               : null,
                           icon: _runningReconciliation
                               ? const SizedBox.square(
@@ -299,20 +322,38 @@ class _AgenticReconcilerTabState extends ConsumerState<AgenticReconcilerTab> {
                           label: Text('agent_ops_run_reconciliation'.tr()),
                         ),
                         FilledButton.tonalIcon(
+                          style: data.missingLedgerTarget == null
+                              ? null
+                              : FilledButton.styleFrom(
+                                  backgroundColor: context.cs.errorContainer,
+                                  foregroundColor: context.cs.onErrorContainer,
+                                ),
                           onPressed:
                               ledgerEnabled &&
                                   !_runningLedger &&
                                   !_runningReconciliation &&
                                   _regeneratingRunId == null
-                              ? _rerunLedger
+                              ? () => _rerunLedger(
+                                  missingEndpoint:
+                                      data.missingLedgerTarget != null,
+                                )
                               : null,
                           icon: _runningLedger
                               ? const SizedBox.square(
                                   dimension: 16,
                                   child: GlazeSpinner(),
                                 )
-                              : const Icon(Icons.replay_outlined),
-                          label: Text('agent_ops_rerun_ledger'.tr()),
+                              : Icon(
+                                  data.missingLedgerTarget == null
+                                      ? Icons.replay_outlined
+                                      : Icons.warning_amber_rounded,
+                                ),
+                          label: Text(
+                            (data.missingLedgerTarget == null
+                                    ? 'agent_ops_rerun_ledger'
+                                    : 'agent_ops_run_missing_ledger')
+                                .tr(),
+                          ),
                         ),
                       ],
                     ),

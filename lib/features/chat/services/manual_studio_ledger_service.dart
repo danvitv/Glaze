@@ -252,6 +252,7 @@ class ManualStudioLedgerService {
           session.messages,
           maxMessages: 10,
           upToMessageId: target.id,
+          excludeMessageId: target.id,
         ),
         target: target,
         macroCtx: macroCtx,
@@ -280,30 +281,35 @@ class ManualStudioLedgerService {
     );
   }
 
+  Future<ManualStudioLedgerResult> rerunMissingForReconciliation(
+    String sessionId,
+  ) async {
+    final session = await chatRepo.getById(sessionId);
+    if (session == null) throw StateError('Session not found');
+    final plan = await _reconciliationPlan(session);
+    if (plan == null) {
+      throw StateError('No batch of five committed Ledger ranges is due');
+    }
+    final endpoint = plan.endMessage;
+    final snapshot = await snapshotRepo.getByAnchor(
+      sessionId: sessionId,
+      messageId: endpoint.id,
+      swipeId: endpoint.swipeId,
+      agentSwipeId: endpoint.agentSwipeId,
+    );
+    if (snapshot?.committed == true) {
+      throw StateError('The reconciliation endpoint is already committed');
+    }
+    return rerun(sessionId: sessionId, target: endpoint);
+  }
+
   Future<ManualStudioLedgerResult> reconcile(String sessionId) async {
     final turnConfigFuture = _resolveTurnConfig(sessionId);
     final session = await chatRepo.getById(sessionId);
     if (session == null) throw StateError('Session not found');
     final turnConfig = await turnConfigFuture;
     _requireLedgerEnabled(turnConfig);
-    final trigger = session.messages.reversed.where((message) {
-      return message.role == 'assistant' &&
-          !message.isError &&
-          !message.isTyping &&
-          !message.isHidden &&
-          message.content.trim().isNotEmpty;
-    }).firstOrNull;
-    if (trigger == null) {
-      throw StateError('No assistant turn can trigger reconciliation');
-    }
-    final checkpoint = await reconciliationCheckpointRepo.get(sessionId);
-    final previousHead = await reconciliationRunRepo.getHead(sessionId);
-    final plan = const LedgerReconciliationPlanner().plan(
-      messages: session.messages,
-      currentAssistantMessageId: trigger.id,
-      checkpoint: checkpoint,
-      previousEndMessageId: previousHead?.endMessageId,
-    );
+    final plan = await _reconciliationPlan(session);
     if (plan == null) {
       throw StateError('No batch of five committed Ledger ranges is due');
     }
@@ -354,6 +360,29 @@ class ManualStudioLedgerService {
       target: endpoint,
       result: result,
       startedAtMs: startedAt,
+    );
+  }
+
+  Future<LedgerReconciliationPlan?> _reconciliationPlan(
+    ChatSession session,
+  ) async {
+    final trigger = session.messages.reversed.where((message) {
+      return message.role == 'assistant' &&
+          !message.isError &&
+          !message.isTyping &&
+          !message.isHidden &&
+          message.content.trim().isNotEmpty;
+    }).firstOrNull;
+    if (trigger == null) {
+      throw StateError('No assistant turn can trigger reconciliation');
+    }
+    final checkpoint = await reconciliationCheckpointRepo.get(session.id);
+    final previousHead = await reconciliationRunRepo.getHead(session.id);
+    return const LedgerReconciliationPlanner().plan(
+      messages: session.messages,
+      currentAssistantMessageId: trigger.id,
+      checkpoint: checkpoint,
+      previousEndMessageId: previousHead?.endMessageId,
     );
   }
 
@@ -548,18 +577,25 @@ String _recentHistoryText(
   List<ChatMessage> messages, {
   int maxMessages = 10,
   String? upToMessageId,
+  String? excludeMessageId,
 }) {
   var source = messages;
   if (upToMessageId != null) {
     final idx = messages.indexWhere((m) => m.id == upToMessageId);
     if (idx >= 0) source = messages.sublist(0, idx + 1);
   }
-  final start = source.length > maxMessages ? source.length - maxMessages : 0;
+  final eligible = source.where((message) {
+    if (message.id == excludeMessageId) return false;
+    if (message.role != 'user' && message.role != 'assistant') return false;
+    if (message.isHidden || message.isError || message.isTyping) return false;
+    return message.content.trim().isNotEmpty;
+  }).toList();
+  final start = eligible.length > maxMessages
+      ? eligible.length - maxMessages
+      : 0;
   final lines = <String>[];
-  for (final msg in source.sublist(start)) {
-    if (msg.isError || msg.isTyping) continue;
+  for (final msg in eligible.sublist(start)) {
     final content = msg.content.trim();
-    if (content.isEmpty) continue;
     final role = msg.role == 'assistant' ? 'Assistant' : 'User';
     lines.add('$role: $content');
   }
