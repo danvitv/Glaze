@@ -59,6 +59,11 @@ class ChatBridgeController {
   /// the extended bubble (INV-CM6).
   String? continuationTargetId;
 
+  /// Mirrors [ChatState.isSendPending] for the message mapper. Set from the
+  /// sync dispatcher *before* any message mapping can read it, because the
+  /// renderer draws (or withholds) the Regenerate button from the map alone.
+  bool isSendPending = false;
+
   /// Last generation-phase label pushed to the page ('' = the page's own
   /// default). Kept here so the listener can skip a redundant eval, the same
   /// way the isGenerating flags are reconciled against the bridge.
@@ -137,6 +142,7 @@ class ChatBridgeController {
     personaAvatarDataUrl: _personaAvatarUrl,
     isGenerating: isGenerating,
     isPostGenRunning: isPostGenRunning,
+    isSendPending: isSendPending,
     coveredMemoryIds: _coveredMemoryIds,
     pendingMemoryIds: _pendingMemoryIds,
     draftMemoryIds: _draftMemoryIds,

@@ -2491,6 +2491,24 @@ void main() {
     });
   });
 
+  group('Regenerate button (renderer/message_renderer.js)', () {
+    test('the send window withholds Regenerate at render time', () {
+      final idx = rendererMessageJs.indexOf('const showRegen =');
+      expect(idx, isNot(-1));
+      final line = rendererMessageJs.substring(idx, idx + 200);
+      expect(
+        line,
+        contains('!m.isSendPending'),
+        reason:
+            'the renderer draws this button from the map alone, so the send '
+            'window has to reach it there — setLastMessage only cleans up a '
+            'button on the element it flagged as last',
+      );
+      expect(line, contains('!m.isGenerating'));
+      expect(line, contains('!m.isEditing'));
+    });
+  });
+
   // The typing bubble used to say "Generating..." from the moment it appeared
   // — through prompt assembly, memory retrieval and the wait for the first
   // token. The label is now pushed from Flutter as the run advances.

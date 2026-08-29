@@ -99,6 +99,12 @@ class ChatWebViewSyncDispatcher {
       );
     }
 
+    // Mirror the send window before anything can map a message: the renderer
+    // decides whether to draw the Regenerate button from the map alone, and
+    // the optimistic user bubble is mapped from a queued mutation scheduled
+    // later in this same dispatch.
+    bridge.isSendPending = current.isSendPending;
+
     _maybeUpdateMemoryBook(bridge: bridge, old: old, current: current);
 
     if (current.charId != old.charId || current.sessionId != old.sessionId) {

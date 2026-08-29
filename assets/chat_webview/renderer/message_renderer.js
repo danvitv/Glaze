@@ -515,7 +515,11 @@ if (messageData.isEditing) classes.push('editing');
     const hasSwipes = isChar && m.swipeTotal && m.swipeTotal > 1;
     const hasAgentSwipes = isChar && m.agentSwipeFinalCount && m.agentSwipeFinalCount > 1;
     const hasGreetings = isChar && m.messageIndex === 0 && m.greetingTotal && m.greetingTotal > 1;
-    const showRegen = ((!isChar && m.isLast) || m.isError) && !m.isGenerating && !m.isEditing;
+    // `isSendPending` is the window between the user's bubble being painted
+    // and its generation being published: nothing streams yet, but the reply
+    // is on its way, so this message is not one to offer a re-roll of.
+    const showRegen = ((!isChar && m.isLast) || m.isError)
+      && !m.isGenerating && !m.isSendPending && !m.isEditing;
 
     if (hasSwipes) {
       center.appendChild(this._createSwitcher(m.id, m.swipeIndex || 0, m.swipeTotal, 'swipe'));

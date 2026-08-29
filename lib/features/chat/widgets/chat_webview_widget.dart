@@ -462,6 +462,7 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
           isGenerating: widget.isGenerating,
           isGeneratingImage: widget.isGeneratingImage,
           isPostGenRunning: widget.isPostGenRunning,
+          isSendPending: widget.isSendPending,
         ),
         onReady: () {
           if (!mounted || !identical(_bridge, bridge)) return;
@@ -589,6 +590,10 @@ class ChatWebViewWidgetState extends ConsumerState<ChatWebViewWidget>
   Future<void> _resyncMessagesAfterInit() async {
     final bridge = _bridge;
     if (bridge == null || !_ready || !mounted) return;
+    // The dispatcher skips every update while `_ready` is false, so this
+    // catch-up pass is the first thing to map messages after a slow init —
+    // it has to carry the send window itself.
+    bridge.isSendPending = widget.isSendPending;
     await _bridgeOp(
       _messageSync.sync(
         bridge: bridge,

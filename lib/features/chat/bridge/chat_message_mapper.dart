@@ -22,6 +22,14 @@ abstract class ChatMessageMapperContext with _$ChatMessageMapperContext {
     /// Post-stream work is active. This is intentionally distinct from
     /// [isGenerating], which covers only the main response stream.
     @Default(false) bool isPostGenRunning,
+
+    /// A send is painted but its generation has not been published yet
+    /// (`ChatState.isSendPending`). Distinct from [isGenerating] for the same
+    /// reason [isPostGenRunning] is: nothing is streaming. The renderer needs
+    /// it because it decides whether to draw the Regenerate button under a
+    /// trailing user message from the map alone — and that message's reply is
+    /// already on its way.
+    @Default(false) bool isSendPending,
     @Default({}) Set<String> coveredMemoryIds,
     @Default({}) Set<String> pendingMemoryIds,
     @Default({}) Set<String> draftMemoryIds,
@@ -190,6 +198,7 @@ class ChatMessageMapper {
         'triggeredRegexes': _triggeredToJson(triggeredRegexes),
       'isGenerating': ctx.isGenerating,
       'isPostGenRunning': ctx.isPostGenRunning,
+      if (ctx.isSendPending) 'isSendPending': true,
       if (ctx.continuationTargetId != null && ctx.continuationTargetId == m.id)
         'isContinuing': true,
     };

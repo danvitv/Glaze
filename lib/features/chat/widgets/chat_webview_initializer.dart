@@ -55,6 +55,7 @@ class ChatWebViewInitInput {
     required this.isGenerating,
     required this.isGeneratingImage,
     this.isPostGenRunning = false,
+    this.isSendPending = false,
   });
 
   final String charId;
@@ -96,6 +97,9 @@ class ChatWebViewInitInput {
   final bool isSelectionMode;
   final bool isGenerating;
   final bool isGeneratingImage;
+
+  /// Mirrors [ChatState.isSendPending]; see [ChatBridgeController.isSendPending].
+  final bool isSendPending;
   final bool isPostGenRunning;
 }
 
@@ -169,6 +173,7 @@ class ChatWebViewInitializer {
     bridge.isGenerating = input.isGenerating;
     bridge.isPostGenRunning = input.isPostGenRunning;
     bridge.isGeneratingImage = input.isGeneratingImage;
+    bridge.isSendPending = input.isSendPending;
     // Origin ("Created on" / "Branched on") marker for the first paint.
     bridge.chatOrigin = ChatBridgeController.originMarkerFor(
       ref.read(chatProvider(input.charId)).value?.session,
