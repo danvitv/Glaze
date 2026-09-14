@@ -30,6 +30,10 @@ abstract class LorebookEntry with _$LorebookEntry {
     @Default('') String group,
     @Default(0) int groupProminence,
     LorebookCharacterFilter? characterFilter,
+    /// The entry opts out of the entry caps: neither the book's own
+    /// `maxInjectedEntries` nor the global one can cut it, and it spends no
+    /// slot, so it never pushes another activated entry out. It still has to
+    /// activate first — by key, by being constant, or through the vector pass.
     @Default(false) bool ignoreBudget,
     @Default(false) bool vectorSearch,
     @Default(true) bool useKeywordSearch,
@@ -98,6 +102,11 @@ abstract class LorebookGlobalSettings with _$LorebookGlobalSettings {
     @Default('worldInfoBefore') String injectionPosition,
     @Default('tokens') String reserveMode,
     @Default(0) int reserveValue,
+    /// Not read by anything. The prompt build fills keyword slots first and
+    /// gives the remainder to the vector pass, capped by [vectorTopK] — it has
+    /// never split the budget by percentage. The field stays so a backup or a
+    /// sync payload written by an older build still round-trips; its editor
+    /// was removed.
     @Default(50) int keywordVectorSplit,
     @Default(0.45) double vectorThreshold,
     @Default(10) int vectorTopK,
@@ -144,6 +153,11 @@ abstract class LorebookSettings with _$LorebookSettings {
     @Default('content') String embeddingTarget,
     @Default(0.45) double vectorThreshold,
     @Default(10) int vectorTopK,
+    /// Not read by anything. The prompt build fills keyword slots first and
+    /// gives the remainder to the vector pass, capped by [vectorTopK] — it has
+    /// never split the budget by percentage. The field stays so a backup or a
+    /// sync payload written by an older build still round-trips; its editor
+    /// was removed.
     @Default(65) int keywordVectorSplit,
     @Default(5) int vectorScanDepth,
     @Default(true) bool vectorSearchEnabled,
