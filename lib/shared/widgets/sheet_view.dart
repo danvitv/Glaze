@@ -5,6 +5,8 @@ import '../theme/app_colors.dart';
 import '../shell/nav_height_provider.dart';
 import '../shell/shell_header_provider.dart';
 import '../../features/settings/app_settings_provider.dart';
+import 'card_backdrop.dart';
+import 'glass_surface.dart';
 import 'glaze_background.dart';
 import 'glaze_scaffold.dart';
 import 'top_edge_blur.dart';
@@ -245,6 +247,74 @@ class _SheetViewState extends ConsumerState<SheetView>
   double _topPad(double height) =>
       MediaQueryData.fromView(View.of(context)).padding.top * _t(height);
 
+  /// Lets the route below stop painting while this sheet covers the screen.
+  ///
+  /// A modal sheet's route is not opaque — it cannot be, since a half-height
+  /// sheet shows the screen behind it through the barrier — so Flutter keeps
+  /// painting that screen on every frame, blurs and all, even when the sheet is
+  /// expanded over it and none of it can be seen. That is why a modal sheet can
+  /// cost *more* than a full-screen route, which occludes and stops the work.
+  ///
+  /// Marking the route's barrier entry opaque takes everything below it off
+  /// stage. It is only true while the sheet genuinely covers the screen, and it
+  /// is re-checked on every height change, so a drag that opens a gap puts the
+  /// screen back before it can be seen through one.
+  ///
+  /// The entrance animation is not at risk: [TransitionRoute] forces this entry
+  /// non-opaque for as long as its animation is running and only writes the
+  /// route's own value when it completes, which is why this re-applies after
+  /// that and never during.
+  void _syncRouteOcclusion() {
+    if (!_inModalSheet || !mounted) return;
+    final route = ModalRoute.of(context);
+    if (route == null || route.overlayEntries.isEmpty) return;
+    final animation = route.animation;
+    final box = context.findRenderObject() as RenderBox?;
+    // Measure what this sheet actually covers rather than reasoning about it:
+    // a bottom sheet is capped at 640 logical pixels wide, so on a tablet or a
+    // desktop window it leaves the barrier showing down both sides however tall
+    // it is, and a `fitContent` sheet never reaches the top at all.
+    final covers =
+        animation != null &&
+        animation.isCompleted &&
+        box != null &&
+        box.hasSize &&
+        _coversScreen(box);
+    final entry = route.overlayEntries.first;
+    if (entry.opaque != covers) entry.opaque = covers;
+    _occluded = covers ? entry : null;
+  }
+
+  bool _coversScreen(RenderBox box) {
+    final screen = MediaQuery.sizeOf(context);
+    final origin = box.localToGlobal(Offset.zero);
+    const slack = 0.5;
+    return origin.dx <= slack &&
+        origin.dy <= slack &&
+        origin.dx + box.size.width >= screen.width - slack &&
+        origin.dy + box.size.height >= screen.height - slack;
+  }
+
+  /// Schedules [_syncRouteOcclusion] for after this frame: it changes the
+  /// overlay's state, which cannot be done while the overlay is building.
+  void _scheduleOcclusionSync() {
+    if (!_inModalSheet || _occlusionSyncScheduled) return;
+    _occlusionSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _occlusionSyncScheduled = false;
+      _syncRouteOcclusion();
+    });
+  }
+
+  bool _occlusionSyncScheduled = false;
+  Animation<double>? _routeAnimation;
+
+  /// The barrier entry this sheet marked opaque, so it can be handed back.
+  OverlayEntry? _occluded;
+
+  void _onRouteAnimationStatus(AnimationStatus status) =>
+      _scheduleOcclusionSync();
+
   /// [base] plus the keyboard lift, never past fullscreen.
   double _lifted(double base) {
     if (_kbLift <= 0) return base;
@@ -316,7 +386,16 @@ class _SheetViewState extends ConsumerState<SheetView>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _inModalSheet = ModalRoute.of(context) is ModalBottomSheetRoute;
+    final route = ModalRoute.of(context);
+    _inModalSheet = route is ModalBottomSheetRoute;
+    // [TransitionRoute] rewrites the barrier entry's opacity on every status
+    // change, so the occlusion below has to be re-applied after it settles.
+    final routeAnimation = route?.animation;
+    if (!identical(routeAnimation, _routeAnimation)) {
+      _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+      _routeAnimation = routeAnimation;
+      _routeAnimation?.addStatusListener(_onRouteAnimationStatus);
+    }
     // A modal bottom sheet is mounted on the root navigator, above any host,
     // so it always keeps its own header.
     _hostDrawsChrome = !_inModalSheet && DetachedShellHost.drawsChrome(context);
@@ -455,6 +534,11 @@ class _SheetViewState extends ConsumerState<SheetView>
       );
     }
     _anim?.removeListener(_onTick);
+    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+    // Hand the screen below back before going away. The route's own reverse
+    // transition does this too; this covers a sheet torn down without one.
+    _occluded?.opaque = false;
+    _occluded = null;
     _ctrl.dispose();
     _fallbackScrollController.dispose();
     _heightN.dispose();
@@ -778,6 +862,9 @@ class _SheetViewState extends ConsumerState<SheetView>
           valueListenable: _heightN,
           child: content,
           builder: (context, height, child) {
+            // Every height change can open or close the gap the screen below
+            // would show through.
+            _scheduleOcclusionSync();
             return SizedBox(
               height: widget.fitContent ? null : _lifted(height),
               child: ClipRRect(
@@ -804,75 +891,96 @@ class _SheetViewState extends ConsumerState<SheetView>
     bool opaque = false,
   }) {
     final isKeyboardOpen = _keyboardOpen;
-    return Container(
+    // Everything in the body sits on the fill below and nothing in it overlaps
+    // anything else, so while that fill is opaque a glass surface in here has
+    // one flat colour behind it: its blur would hand back the colour already
+    // there, for a backdrop read and a render target per card. The header is
+    // deliberately left out — it is painted over the scrolling body, and its
+    // blur is real (and is [TopEdgeBlur]'s, not a surface's).
+    final body = FlatBackdrop(
+      color: opaque ? context.cs.surface : null,
+      child: _buildBodyChild(
+        context,
+        bottomInset,
+        isKeyboardOpen,
+        batterySaver,
+      ),
+    );
+    return ColoredBox(
       color: context.cs.surface.withValues(alpha: opaque ? 1.0 : 0.8),
-      child: Stack(
-        children: [
-          widget.fitContent
-              ? _buildBodyChild(
-                  context,
-                  bottomInset,
-                  isKeyboardOpen,
-                  batterySaver,
-                )
-              : Positioned.fill(
-                  child: _buildBodyChild(
-                    context,
-                    bottomInset,
-                    isKeyboardOpen,
-                    batterySaver,
-                  ),
-                ),
+      // This fill is what the sheet's content sits on, not the app background,
+      // so nothing inside may sample a baked app backdrop — it would paint the
+      // background straight over this surface. See [CardBackdrop].
+      child: CardBackdrop.closed(
+        child: Stack(
+          children: [
+            widget.fitContent ? body : Positioned.fill(child: body),
 
-          // Interactive header — rendered above the gradient so buttons
-          // and drag handle are unobscured and fully hittable.
-          if (_hasHeader)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: KeyedSubtree(
-                key: _headerKey,
-                child: ValueListenableBuilder<double>(
-                  valueListenable: _heightN,
-                  child: _SheetViewHeader(
-                    showAppBar: _hasAppBarRow,
-                    title: widget.title,
-                    titleWidget: widget.titleWidget,
-                    showBack: widget.showBack,
-                    onBack: widget.onBack,
-                    actions: widget.actions,
-                    tabs: widget.tabs,
-                    activeTabId: widget.activeTabId,
-                    onTabSelected: widget.onTabSelected,
-                    headerBottom: widget.headerBottom,
-                    showHandle: _effectiveShowHandle,
-                    expanded: _expanded,
-                    onHandleTap: _toggle,
-                    onDragStart: widget.fitContent ? null : _onDragStart,
-                    onDragUpdate: widget.fitContent ? null : _onDragUpdate,
-                    onDragEnd: widget.fitContent ? null : _onDragEnd,
+            // Interactive header — rendered above the gradient so buttons
+            // and drag handle are unobscured and fully hittable.
+            if (_hasHeader)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                // Glass in the header (the segmented control) composites
+                // against the header's own scrim instead of blurring what is
+                // behind it. Its blur was redundant where [TopEdgeBlur] is at
+                // full strength — over content already blurred at sigma 24,
+                // dropping it moves 1-2/255 — but the strip's gradient fades
+                // that out over its lower half, which is exactly where the
+                // control sits, so the blur was doing real work on sharp
+                // content there and cost two backdrop passes a frame for it.
+                // Solid is the trade: the control reads as a panel on the
+                // header rather than as a window onto the list.
+                child: FlatBackdrop(
+                  color: opaque ? context.cs.surface : null,
+                  child: KeyedSubtree(
+                    key: _headerKey,
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: _heightN,
+                      child: _SheetViewHeader(
+                        showAppBar: _hasAppBarRow,
+                        title: widget.title,
+                        titleWidget: widget.titleWidget,
+                        showBack: widget.showBack,
+                        onBack: widget.onBack,
+                        actions: widget.actions,
+                        tabs: widget.tabs,
+                        activeTabId: widget.activeTabId,
+                        onTabSelected: widget.onTabSelected,
+                        headerBottom: widget.headerBottom,
+                        showHandle: _effectiveShowHandle,
+                        expanded: _expanded,
+                        onHandleTap: _toggle,
+                        onDragStart: widget.fitContent ? null : _onDragStart,
+                        onDragUpdate: widget.fitContent ? null : _onDragUpdate,
+                        onDragEnd: widget.fitContent ? null : _onDragEnd,
+                      ),
+                      builder: (context, height, header) {
+                        // Recorded so _measureHeader subtracts exactly what this
+                        // frame added.
+                        _headerTopPad = _topPad(_lifted(height));
+                        return Padding(
+                          padding: EdgeInsets.only(top: _headerTopPad),
+                          child: header,
+                        );
+                      },
+                    ),
                   ),
-                  builder: (context, height, header) {
-                    // Recorded so _measureHeader subtracts exactly what this
-                    // frame added.
-                    _headerTopPad = _topPad(_lifted(height));
-                    return Padding(
-                      padding: EdgeInsets.only(top: _headerTopPad),
-                      child: header,
-                    );
-                  },
                 ),
               ),
-            ),
-          if (widget.floating != null) Positioned.fill(child: widget.floating!),
-          if (widget.floatingActionButton != null)
-            Positioned(
-              right: 16,
-              bottom: 16 + MediaQuery.of(context).padding.bottom + bottomInset,
-              child: widget.floatingActionButton!,
-            ),
-        ],
+            if (widget.floating != null)
+              Positioned.fill(child: widget.floating!),
+            if (widget.floatingActionButton != null)
+              Positioned(
+                right: 16,
+                bottom:
+                    16 + MediaQuery.of(context).padding.bottom + bottomInset,
+                child: widget.floatingActionButton!,
+              ),
+          ],
+        ),
       ),
     );
   }

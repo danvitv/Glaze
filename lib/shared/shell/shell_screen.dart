@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../widgets/glass_nav_bar.dart';
+import '../widgets/glass_surface.dart';
 import '../widgets/glaze_background.dart';
 import '../widgets/glaze_scaffold.dart' show GlazeAppBar;
 import '../widgets/glaze_toast.dart';
@@ -189,7 +190,15 @@ class _PersistentHeader extends ConsumerWidget {
       // throughout the cross-fade rather than snapping when one is disposed.
       layoutBuilder: (currentChild, previousChildren) => Stack(
         alignment: Alignment.topCenter,
-        children: [...previousChildren, ?currentChild],
+        children: [
+          // An outgoing header sits exactly on top of the incoming one, so it
+          // must not join the header's backdrop group: overlapping surfaces
+          // cannot share a capture. Excluded here rather than app-side, so the
+          // group below stays a plain "the header chrome shares one blur".
+          for (final child in previousChildren)
+            GlassBackdropGroup.none(child: child),
+          ?currentChild,
+        ],
       ),
       child: entry == null || entry.config.hidden
           ? const SizedBox.shrink(key: ValueKey('shell-header-empty'))
@@ -206,23 +215,32 @@ class _PersistentHeader extends ConsumerWidget {
             ),
     );
 
-    final content = SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            appBar,
-            // Decoupled from the app bar's cross-fade so that switching to a
-            // screen without a segmented control slides the control up and out
-            // on its own, instead of plain-fading with the rest of the header.
-            AnimatedHeaderBelow(
-              below: entry == null || entry.config.hidden
-                  ? null
-                  : entry.config.below,
-            ),
-          ],
+    // The app-bar row and the `below` slot beneath it are painted one after
+    // the other and never overlap, so the engine can blur the backdrop once
+    // for both instead of once each — on a tiled GPU that is one framebuffer
+    // resolve per frame rather than two, on every frame of every scroll. A
+    // glass element nested *inside* either of them (the active pill in a tab
+    // strip) keeps its own blur: [GlassSurface] closes the group around its
+    // own children.
+    final content = GlassBackdropGroup(
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              appBar,
+              // Decoupled from the app bar's cross-fade so that switching to a
+              // screen without a segmented control slides the control up and out
+              // on its own, instead of plain-fading with the rest of the header.
+              AnimatedHeaderBelow(
+                below: entry == null || entry.config.hidden
+                    ? null
+                    : entry.config.below,
+              ),
+            ],
+          ),
         ),
       ),
     );

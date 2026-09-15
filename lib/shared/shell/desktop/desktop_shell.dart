@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/state/shared_prefs_provider.dart';
+import '../../widgets/glass_surface.dart';
 import '../../widgets/glaze_background.dart';
 import '../../widgets/glaze_scaffold.dart' show GlazeAppBar;
 import '../animated_header_below.dart';
@@ -287,19 +288,24 @@ class _DesktopHeader extends ConsumerWidget {
             ),
     );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        appBar,
-        // Decoupled from the app bar's cross-fade so that switching to a screen
-        // without a segmented control slides the control up and out on its own,
-        // instead of plain-fading with the rest of the header.
-        AnimatedHeaderBelow(
-          below: entry == null || entry.config.hidden
-              ? null
-              : entry.config.below,
-        ),
-      ],
+    // Same grouping as the mobile shell header: the app-bar row and the slot
+    // under it are painted one after the other and never overlap, so they can
+    // share one backdrop capture. See [GlassBackdropGroup].
+    return GlassBackdropGroup(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          appBar,
+          // Decoupled from the app bar's cross-fade so that switching to a
+          // screen without a segmented control slides the control up and out on
+          // its own, instead of plain-fading with the rest of the header.
+          AnimatedHeaderBelow(
+            below: entry == null || entry.config.hidden
+                ? null
+                : entry.config.below,
+          ),
+        ],
+      ),
     );
   }
 }

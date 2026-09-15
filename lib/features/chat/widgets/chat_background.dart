@@ -1,8 +1,9 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import '../../../shared/widgets/blurred_image.dart';
 
 /// The chat's own background — base colour, optional image, blur and dim.
 ///
@@ -47,22 +48,14 @@ class ChatBackground extends StatelessWidget {
         ? color!
         : Theme.of(context).colorScheme.surface;
 
-    Widget? image;
+    ImageProvider? image;
     if (mode == 'avatar') {
       final path = avatarPath;
       if (path != null && path.isNotEmpty) {
-        image = Image.file(
-          File(path),
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-        );
+        image = FileImage(File(path));
       }
     } else if (mode != 'color' && imageBytes != null) {
-      image = Image.memory(
-        imageBytes!,
-        fit: BoxFit.cover,
-        gaplessPlayback: true,
-      );
+      image = MemoryImage(imageBytes!);
     }
 
     return Stack(
@@ -70,17 +63,9 @@ class ChatBackground extends StatelessWidget {
       children: [
         ColoredBox(color: base),
         if (image != null) ...[
-          if (blur > 0)
-            ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: blur,
-                sigmaY: blur,
-                tileMode: TileMode.clamp,
-              ),
-              child: image,
-            )
-          else
-            image,
+          // Baked once per (image, sigma, size) instead of being re-filtered
+          // on every composite — see [BlurredImage].
+          BlurredImage(image: image, sigma: blur),
           if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim)),
         ],
       ],

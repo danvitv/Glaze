@@ -122,7 +122,7 @@ class CharacterGrid extends StatelessWidget {
       onChanged: onSortTypeChanged,
     );
 
-    return Wrap(
+    final row = Wrap(
       alignment: isDesktop ? WrapAlignment.start : WrapAlignment.end,
       spacing: 10,
       runSpacing: 8,
@@ -155,6 +155,11 @@ class CharacterGrid extends StatelessWidget {
         ],
       ],
     );
+
+    // One backdrop capture for the whole row instead of one per chip: these
+    // are plain siblings that never overlap, which is what makes sharing
+    // correct. See [GlassBackdropGroup].
+    return GlassBackdropGroup(child: row);
   }
 
   @override

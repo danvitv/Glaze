@@ -259,8 +259,15 @@ jobs:
           # suffix and the launcher label, so the three channels co-install.
           # Signing is unaffected — all channels use the same keystore above.
           BUILD_CHANNEL: ${{ needs.metadata.outputs.build_channel }}
+        # `--split-debug-info` keeps the Dart debug sections out of the APK.
+        # It is what gets the file under Telegram's 50 MB Bot API upload limit,
+        # which the developer DMs need: over it, the build is only announced
+        # with a link to this run, and the point of that toggle is to hand
+        # someone the file. The symbols are uploaded below, so a stack trace
+        # from this build is still readable with `flutter symbolize`.
         run: >
           flutter build apk --release --no-pub --target-platform android-arm64
+          --split-debug-info=build/symbols
           "--dart-define=APP_VERSION=${{ needs.metadata.outputs.version }}"
           "--dart-define=BUILD_DATE=${{ needs.metadata.outputs.build_date }}"
           "--dart-define=BUILD_BRANCH=${{ needs.metadata.outputs.build_branch }}"
@@ -275,6 +282,16 @@ jobs:
         with:
           name: Glaze-release-APK
           path: "build/app/outputs/flutter-apk/${{ needs.metadata.outputs.file_slug }}.apk"
+
+      - name: Upload debug symbols
+        # Deliberately not named `Glaze-release-*`: the notify job collects the
+        # artifacts to post by that pattern, and the symbols are for this run's
+        # record, not for the chat.
+        uses: actions/upload-artifact@v4
+        with:
+          name: Glaze-debug-symbols-android
+          path: build/symbols
+          if-no-files-found: warn
 
   # ── windows ────────────────────────────────────────────────────────────────
   build-windows:
