@@ -109,11 +109,21 @@ class GlassSurface extends ConsumerWidget {
     final alpha = batterySaver ? 1.0 : preset.elementOpacity.clamp(0.0, 1.0);
     final defaultBase = Theme.of(context).colorScheme.surfaceContainerHighest;
     final effectiveTint = tint;
-    final fillColor = effectiveTint == null
+    final tinted = effectiveTint == null
         ? defaultBase.withValues(alpha: alpha)
         : effectiveTint.withValues(
             alpha: (effectiveTint.a * alpha).clamp(0.0, 1.0),
           );
+    // When what is behind this surface is a known opaque colour, compositing
+    // the tint against it here gives the same pixels with none of the work:
+    // no per-frame blend, nothing behind to read, and — through the check
+    // below — no blur pass, since blurring one flat colour returns it. An
+    // opaque card also gives the engine something it can draw over instead of
+    // through, which is what the sheet header's strip capture reads.
+    final behind = FlatBackdrop.of(context);
+    final fillColor = behind == null
+        ? tinted
+        : Color.alphaBlend(tinted, behind);
     // Over the chat WebView the blur is done by an in-WebView CSS strip, so the
     // Flutter BackdropFilter is dropped here (it would sample the platform-view
     // hole, not the WebView content, and cost a blur pass every frame). A fully
@@ -123,9 +133,9 @@ class GlassSurface extends ConsumerWidget {
         (batterySaver ||
             PerfDebug.noGlassBlur ||
             blurViaWebView ||
-            // A flat opaque fill blurs to itself: the pass would cost a
-            // backdrop read and produce the colour that is already there.
-            FlatBackdrop.of(context) ||
+            // A fully opaque fill hides the backdrop, so the blur would be
+            // invisible and only cost a saveLayer and a pass every frame. A
+            // surface composited against a flat backdrop above lands here too.
             fillColor.a >= 1.0)
         ? 0.0
         : preset.elementBlur;
@@ -290,26 +300,37 @@ class _GlassBackdropScope extends InheritedWidget {
       oldWidget.backdropKey != backdropKey;
 }
 
-/// Marks a subtree whose backdrop is a flat, opaque fill, so a [GlassSurface]
-/// inside it skips its blur: blurring one uniform colour gives that colour
-/// back, and the pass is a backdrop read and a render target for nothing.
+/// Names the flat, opaque colour that sits behind a subtree, so a
+/// [GlassSurface] inside it can composite its tint against that colour once
+/// instead of blending over it every frame — and skip its blur, since blurring
+/// one uniform colour gives that colour back.
 ///
-/// The surfaces keep their tint, border and grain — only the blur goes. Set it
-/// where the fill is known to be both opaque and uniform under everything in
-/// the subtree, as an opaque modal sheet is: its cards sit on the sheet's own
-/// colour and never overlap each other. It does not hold for chrome painted
-/// over scrolling content, which is why a sheet marks its body and not its
-/// header.
+/// The surfaces look exactly the same: the same tint over the same backdrop,
+/// resolved ahead of time rather than by the compositor. What goes away is a
+/// blend, a backdrop read and a render target per surface.
+///
+/// Set it where the colour behind is genuinely opaque and uniform under
+/// everything in the subtree, as an opaque modal sheet is: its cards sit on the
+/// sheet's own colour and never overlap each other. It does not hold for chrome
+/// painted over scrolling content, which is why a sheet marks its body and not
+/// its header.
 class FlatBackdrop extends InheritedWidget {
-  /// False re-opens the blur for a subtree of a marked one.
-  final bool flat;
+  /// The opaque colour behind this subtree, or null where it is not flat —
+  /// which re-opens the blur inside a marked one.
+  final Color? color;
 
-  const FlatBackdrop({super.key, required this.flat, required super.child});
+  const FlatBackdrop({super.key, required this.color, required super.child});
 
-  static bool of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<FlatBackdrop>()?.flat ?? false;
+  static Color? of(BuildContext context) {
+    final color = context
+        .dependOnInheritedWidgetOfExactType<FlatBackdrop>()
+        ?.color;
+    // A backdrop that is not itself opaque cannot stand in for what is behind
+    // it, so it is no better than not knowing.
+    return (color != null && color.a >= 1.0) ? color : null;
+  }
 
   @override
   bool updateShouldNotify(covariant FlatBackdrop oldWidget) =>
-      oldWidget.flat != flat;
+      oldWidget.color != color;
 }

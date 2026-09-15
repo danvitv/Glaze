@@ -813,7 +813,7 @@ class _SheetViewState extends ConsumerState<SheetView>
     // deliberately left out — it is painted over the scrolling body, and its
     // blur is real (and is [TopEdgeBlur]'s, not a surface's).
     final body = FlatBackdrop(
-      flat: opaque,
+      color: opaque ? context.cs.surface : null,
       child: _buildBodyChild(
         context,
         bottomInset,

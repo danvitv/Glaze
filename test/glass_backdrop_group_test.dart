@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:glaze_flutter/shared/widgets/glass_surface.dart';
@@ -138,14 +141,14 @@ void main() {
     await pump(
       tester,
       FlatBackdrop(
-        flat: true,
+        color: const Color(0xFF1B1D22),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             chip('a'),
-            // A subtree can re-open the blur where the fill below it is not
+            // A subtree can re-open the blur where what is behind it is not
             // flat after all.
-            FlatBackdrop(flat: false, child: chip('b')),
+            FlatBackdrop(color: null, child: chip('b')),
           ],
         ),
       ),
@@ -157,6 +160,85 @@ void main() {
     // Both still paint their tint and border — only the blur is dropped.
     expect(find.byType(GlassSurface), findsNWidgets(2));
     expect(find.byType(DecoratedBox), findsNWidgets(2));
+  });
+
+  testWidgets('compositing against the flat colour paints the same pixels', (
+    tester,
+  ) async {
+    const behind = Color(0xFF1B1D22);
+
+    Future<ByteData> render({required bool told}) async {
+      final surface = SizedBox(
+        width: 160,
+        height: 80,
+        child: GlassSurface(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0x33FFFFFF)),
+          child: const SizedBox.expand(),
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: RepaintBoundary(
+              child: ColoredBox(
+                color: behind,
+                child: Center(
+                  child: told
+                      ? const FlatBackdrop(color: behind, child: SizedBox())
+                      : const SizedBox(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // Rebuilt with the real child now that the tree shape is settled, so both
+      // passes go through the same widget path.
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: RepaintBoundary(
+              child: ColoredBox(
+                color: behind,
+                child: Center(
+                  child: told
+                      ? FlatBackdrop(color: behind, child: surface)
+                      : surface,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.byType(RepaintBoundary).first,
+      );
+      late ByteData bytes;
+      await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        bytes = (await image.toByteData())!;
+        image.dispose();
+      });
+      return bytes;
+    }
+
+    final blended = await render(told: true);
+    final blurred = await render(told: false);
+
+    expect(blended.lengthInBytes, blurred.lengthInBytes);
+    var worst = 0;
+    for (var i = 0; i < blurred.lengthInBytes; i++) {
+      final delta = (blended.getUint8(i) - blurred.getUint8(i)).abs();
+      if (delta > worst) worst = delta;
+    }
+    // Blurring a flat colour returns that colour, and a tint over it
+    // composites to the same thing whether the compositor does it per frame or
+    // this does it once. What is left is the rounded rect's antialiased edge,
+    // where coverage blending a translucent fill and drawing an opaque one
+    // disagree by a couple of steps of an 8-bit channel.
+    expect(worst, lessThanOrEqualTo(6), reason: 'worst channel delta');
   });
 
   testWidgets('the key survives a rebuild', (tester) async {
