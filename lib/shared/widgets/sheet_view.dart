@@ -5,6 +5,7 @@ import '../theme/app_colors.dart';
 import '../shell/nav_height_provider.dart';
 import '../shell/shell_header_provider.dart';
 import '../../features/settings/app_settings_provider.dart';
+import 'card_backdrop.dart';
 import 'glaze_background.dart';
 import 'glaze_scaffold.dart';
 import 'top_edge_blur.dart';
@@ -804,75 +805,82 @@ class _SheetViewState extends ConsumerState<SheetView>
     bool opaque = false,
   }) {
     final isKeyboardOpen = _keyboardOpen;
-    return Container(
+    return ColoredBox(
       color: context.cs.surface.withValues(alpha: opaque ? 1.0 : 0.8),
-      child: Stack(
-        children: [
-          widget.fitContent
-              ? _buildBodyChild(
-                  context,
-                  bottomInset,
-                  isKeyboardOpen,
-                  batterySaver,
-                )
-              : Positioned.fill(
-                  child: _buildBodyChild(
+      // This fill is what the sheet's content sits on, not the app background,
+      // so nothing inside may sample a baked app backdrop — it would paint the
+      // background straight over this surface. See [CardBackdrop].
+      child: CardBackdrop.closed(
+        child: Stack(
+          children: [
+            widget.fitContent
+                ? _buildBodyChild(
                     context,
                     bottomInset,
                     isKeyboardOpen,
                     batterySaver,
+                  )
+                : Positioned.fill(
+                    child: _buildBodyChild(
+                      context,
+                      bottomInset,
+                      isKeyboardOpen,
+                      batterySaver,
+                    ),
                   ),
-                ),
 
-          // Interactive header — rendered above the gradient so buttons
-          // and drag handle are unobscured and fully hittable.
-          if (_hasHeader)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: KeyedSubtree(
-                key: _headerKey,
-                child: ValueListenableBuilder<double>(
-                  valueListenable: _heightN,
-                  child: _SheetViewHeader(
-                    showAppBar: _hasAppBarRow,
-                    title: widget.title,
-                    titleWidget: widget.titleWidget,
-                    showBack: widget.showBack,
-                    onBack: widget.onBack,
-                    actions: widget.actions,
-                    tabs: widget.tabs,
-                    activeTabId: widget.activeTabId,
-                    onTabSelected: widget.onTabSelected,
-                    headerBottom: widget.headerBottom,
-                    showHandle: _effectiveShowHandle,
-                    expanded: _expanded,
-                    onHandleTap: _toggle,
-                    onDragStart: widget.fitContent ? null : _onDragStart,
-                    onDragUpdate: widget.fitContent ? null : _onDragUpdate,
-                    onDragEnd: widget.fitContent ? null : _onDragEnd,
+            // Interactive header — rendered above the gradient so buttons
+            // and drag handle are unobscured and fully hittable.
+            if (_hasHeader)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: KeyedSubtree(
+                  key: _headerKey,
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _heightN,
+                    child: _SheetViewHeader(
+                      showAppBar: _hasAppBarRow,
+                      title: widget.title,
+                      titleWidget: widget.titleWidget,
+                      showBack: widget.showBack,
+                      onBack: widget.onBack,
+                      actions: widget.actions,
+                      tabs: widget.tabs,
+                      activeTabId: widget.activeTabId,
+                      onTabSelected: widget.onTabSelected,
+                      headerBottom: widget.headerBottom,
+                      showHandle: _effectiveShowHandle,
+                      expanded: _expanded,
+                      onHandleTap: _toggle,
+                      onDragStart: widget.fitContent ? null : _onDragStart,
+                      onDragUpdate: widget.fitContent ? null : _onDragUpdate,
+                      onDragEnd: widget.fitContent ? null : _onDragEnd,
+                    ),
+                    builder: (context, height, header) {
+                      // Recorded so _measureHeader subtracts exactly what this
+                      // frame added.
+                      _headerTopPad = _topPad(_lifted(height));
+                      return Padding(
+                        padding: EdgeInsets.only(top: _headerTopPad),
+                        child: header,
+                      );
+                    },
                   ),
-                  builder: (context, height, header) {
-                    // Recorded so _measureHeader subtracts exactly what this
-                    // frame added.
-                    _headerTopPad = _topPad(_lifted(height));
-                    return Padding(
-                      padding: EdgeInsets.only(top: _headerTopPad),
-                      child: header,
-                    );
-                  },
                 ),
               ),
-            ),
-          if (widget.floating != null) Positioned.fill(child: widget.floating!),
-          if (widget.floatingActionButton != null)
-            Positioned(
-              right: 16,
-              bottom: 16 + MediaQuery.of(context).padding.bottom + bottomInset,
-              child: widget.floatingActionButton!,
-            ),
-        ],
+            if (widget.floating != null)
+              Positioned.fill(child: widget.floating!),
+            if (widget.floatingActionButton != null)
+              Positioned(
+                right: 16,
+                bottom:
+                    16 + MediaQuery.of(context).padding.bottom + bottomInset,
+                child: widget.floatingActionButton!,
+              ),
+          ],
+        ),
       ),
     );
   }

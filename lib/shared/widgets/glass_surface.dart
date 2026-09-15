@@ -142,10 +142,14 @@ class GlassSurface extends ConsumerWidget {
       child: Material(
         type: MaterialType.transparency,
         // Anything inside this surface is painted *over* its own blur, so it
-        // can never share this surface's backdrop capture. Closing the group
+        // can never share this surface's backdrop capture, and what is under it
+        // is this surface rather than the app background. Closing both scopes
         // here is what keeps a nested glass element — the active pill inside a
-        // tab strip, say — on its own honest blur.
-        child: GlassBackdropGroup.none(child: RepaintBoundary(child: child)),
+        // tab strip, a card inside a card — on its own honest blur without
+        // anyone having to remember.
+        child: GlassBackdropGroup.none(
+          child: CardBackdrop.closed(child: RepaintBoundary(child: child)),
+        ),
       ),
     );
 

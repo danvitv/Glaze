@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:glaze_flutter/shared/widgets/baked_blur.dart';
 import 'package:glaze_flutter/shared/widgets/blurred_image.dart';
 
 /// A small, deliberately high-contrast source: hard edges are what a Gaussian
@@ -73,8 +74,8 @@ Future<void> _settle(WidgetTester tester) async {
 void main() {
   late Uint8List png;
 
-  setUp(BlurredImage.debugClearCache);
-  tearDown(BlurredImage.debugClearCache);
+  setUp(BakedBlurCache.clear);
+  tearDown(BakedBlurCache.clear);
 
   testWidgets('paints what ImageFiltered would have painted', (tester) async {
     png = (await tester.runAsync(_sourcePng))!;
@@ -124,13 +125,13 @@ void main() {
 
   testWidgets('blurs once and reuses the bake across repaints', (tester) async {
     png = (await tester.runAsync(_sourcePng))!;
-    BlurredImage.debugResetBakeCount();
+    BakedBlurCache.debugResetBakeCount();
 
     await tester.pumpWidget(
       _boxed(BlurredImage(image: MemoryImage(png), sigma: 6)),
     );
     await _settle(tester);
-    expect(BlurredImage.debugBakeCount, 1);
+    expect(BakedBlurCache.bakeCount, 1);
 
     for (var i = 0; i < 5; i++) {
       await tester.pumpWidget(
@@ -138,15 +139,15 @@ void main() {
       );
       await _settle(tester);
     }
-    expect(BlurredImage.debugBakeCount, 1);
-    expect(BlurredImage.debugCacheSize, 1);
+    expect(BakedBlurCache.bakeCount, 1);
+    expect(BakedBlurCache.size, 1);
   });
 
   testWidgets('re-bakes when the sigma changes, and caches both', (
     tester,
   ) async {
     png = (await tester.runAsync(_sourcePng))!;
-    BlurredImage.debugResetBakeCount();
+    BakedBlurCache.debugResetBakeCount();
 
     await tester.pumpWidget(
       _boxed(BlurredImage(image: MemoryImage(png), sigma: 6)),
@@ -157,20 +158,20 @@ void main() {
     );
     await _settle(tester);
 
-    expect(BlurredImage.debugBakeCount, 2);
-    expect(BlurredImage.debugCacheSize, 2);
+    expect(BakedBlurCache.bakeCount, 2);
+    expect(BakedBlurCache.size, 2);
   });
 
   testWidgets('never bakes at sigma zero', (tester) async {
     png = (await tester.runAsync(_sourcePng))!;
-    BlurredImage.debugResetBakeCount();
+    BakedBlurCache.debugResetBakeCount();
 
     await tester.pumpWidget(
       _boxed(BlurredImage(image: MemoryImage(png), sigma: 0)),
     );
     await _settle(tester);
 
-    expect(BlurredImage.debugBakeCount, 0);
+    expect(BakedBlurCache.bakeCount, 0);
     expect(find.byType(Image), findsOneWidget);
     expect(tester.widget<Image>(find.byType(Image)).fit, BoxFit.cover);
   });
@@ -179,7 +180,7 @@ void main() {
     tester,
   ) async {
     png = (await tester.runAsync(_sourcePng))!;
-    BlurredImage.debugResetBakeCount();
+    BakedBlurCache.debugResetBakeCount();
 
     // Boot with no blur — the Battery Saver ON case — so no source is ever
     // resolved.
@@ -187,7 +188,7 @@ void main() {
       _boxed(BlurredImage(image: MemoryImage(png), sigma: 0)),
     );
     await _settle(tester);
-    expect(BlurredImage.debugBakeCount, 0);
+    expect(BakedBlurCache.bakeCount, 0);
 
     // Battery Saver OFF: same image, blur switched on.
     await tester.pumpWidget(
@@ -195,6 +196,6 @@ void main() {
     );
     await _settle(tester);
 
-    expect(BlurredImage.debugBakeCount, 1);
+    expect(BakedBlurCache.bakeCount, 1);
   });
 }

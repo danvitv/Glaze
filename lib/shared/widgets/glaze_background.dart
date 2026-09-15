@@ -73,7 +73,18 @@ class GlazeBackground extends ConsumerWidget {
           bytes != null && preset.elementBlur > 0 && !batterySaver
               ? CardBackdrop(
                   image: MemoryImage(bytes),
-                  sigma: preset.elementBlur,
+                  // What a card actually has under it is the image blurred by
+                  // `bgBlur` and then by its own `elementBlur`. Two Gaussians
+                  // in a row are one, so the bake uses the combined sigma —
+                  // baking at `elementBlur` alone would leave a sampling card
+                  // visibly sharper than its blurring neighbours.
+                  sigma: CardBackdrop.combineSigma(
+                    preset.bgBlur,
+                    preset.elementBlur,
+                  ),
+                  // Baked in, because the sample paints over the dim the stack
+                  // above already drew and would otherwise lose it.
+                  dim: preset.bgDim.clamp(0.0, 1.0),
                   child: child,
                 )
               : child,
