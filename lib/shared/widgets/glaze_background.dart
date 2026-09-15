@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +5,7 @@ import '../../features/settings/app_settings_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/theme_font_provider.dart';
 import '../theme/theme_provider.dart';
+import 'blurred_image.dart';
 import 'noise_overlay.dart';
 
 class GlazeBackground extends ConsumerWidget {
@@ -30,24 +29,13 @@ class GlazeBackground extends ConsumerWidget {
         children: [
           if (bytes != null) ...[
             Positioned.fill(
-              child: !batterySaver && preset.bgBlur > 0
-                  ? ImageFiltered(
-                      imageFilter: ImageFilter.blur(
-                        sigmaX: preset.bgBlur,
-                        sigmaY: preset.bgBlur,
-                        tileMode: TileMode.clamp,
-                      ),
-                      child: Image.memory(
-                        bytes,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                      ),
-                    )
-                  : Image.memory(
-                      bytes,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                    ),
+              // The blur is baked once per (image, sigma, size) rather than
+              // re-applied on every composite — see [BlurredImage]. Battery
+              // saver keeps dropping it entirely.
+              child: BlurredImage(
+                image: MemoryImage(bytes),
+                sigma: batterySaver ? 0 : preset.bgBlur,
+              ),
             ),
             // Darken the image with a black overlay instead of fading it out:
             // a translucent image would let [base] (and, in the chat, the
@@ -72,10 +60,12 @@ class GlazeBackground extends ConsumerWidget {
                 ),
               ),
             ),
-          // Shares a single backdrop blur pass across every grouped
-          // BackdropFilter below (nav bar, header, glass surfaces) instead of
-          // each re-blurring the backdrop independently every frame.
-          BackdropGroup(child: child),
+          // Deliberately no `BackdropGroup` here. Grouping would make every
+          // glass surface below share one backdrop capture, taken where the
+          // first grouped filter paints — so a nav bar or header drawn after
+          // the scrolling body would blur the app background instead of the
+          // content actually under it. See the note in [GlassSurface].
+          child,
         ],
       ),
     );
