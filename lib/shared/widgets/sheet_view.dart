@@ -6,6 +6,7 @@ import '../shell/nav_height_provider.dart';
 import '../shell/shell_header_provider.dart';
 import '../../features/settings/app_settings_provider.dart';
 import 'card_backdrop.dart';
+import 'glass_surface.dart';
 import 'glaze_background.dart';
 import 'glaze_scaffold.dart';
 import 'top_edge_blur.dart';
@@ -805,6 +806,21 @@ class _SheetViewState extends ConsumerState<SheetView>
     bool opaque = false,
   }) {
     final isKeyboardOpen = _keyboardOpen;
+    // Everything in the body sits on the fill below and nothing in it overlaps
+    // anything else, so while that fill is opaque a glass surface in here has
+    // one flat colour behind it: its blur would hand back the colour already
+    // there, for a backdrop read and a render target per card. The header is
+    // deliberately left out — it is painted over the scrolling body, and its
+    // blur is real (and is [TopEdgeBlur]'s, not a surface's).
+    final body = FlatBackdrop(
+      flat: opaque,
+      child: _buildBodyChild(
+        context,
+        bottomInset,
+        isKeyboardOpen,
+        batterySaver,
+      ),
+    );
     return ColoredBox(
       color: context.cs.surface.withValues(alpha: opaque ? 1.0 : 0.8),
       // This fill is what the sheet's content sits on, not the app background,
@@ -813,21 +829,7 @@ class _SheetViewState extends ConsumerState<SheetView>
       child: CardBackdrop.closed(
         child: Stack(
           children: [
-            widget.fitContent
-                ? _buildBodyChild(
-                    context,
-                    bottomInset,
-                    isKeyboardOpen,
-                    batterySaver,
-                  )
-                : Positioned.fill(
-                    child: _buildBodyChild(
-                      context,
-                      bottomInset,
-                      isKeyboardOpen,
-                      batterySaver,
-                    ),
-                  ),
+            widget.fitContent ? body : Positioned.fill(child: body),
 
             // Interactive header — rendered above the gradient so buttons
             // and drag handle are unobscured and fully hittable.

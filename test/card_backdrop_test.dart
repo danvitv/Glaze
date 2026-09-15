@@ -102,6 +102,39 @@ Widget _screen(ui.Image source, Widget card, {Matrix4? transform}) {
   );
 }
 
+/// The same card inside a scrolling list, which is where the texture has to
+/// stay put on its own: a list moves its children by mutating layer offsets,
+/// without repainting them.
+Widget _scrolled(ui.Image source, Widget card, ScrollController controller) =>
+    Directionality(
+      textDirection: TextDirection.ltr,
+      child: RepaintBoundary(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _background(source),
+            ListView(
+              controller: controller,
+              children: [
+                const SizedBox(height: 320),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  child: SizedBox(
+                    height: 180,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: card,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 1400),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
 /// Same fill a glass surface paints over its blur.
 Widget get _fill =>
     ColoredBox(color: const Color(0xFF889099).withValues(alpha: 0.4));
@@ -235,6 +268,46 @@ void main() {
     // 2.1 and 71 here, so this is what holds the shader in place.
     expect(diff.mean, lessThan(1), reason: 'mean channel delta');
     expect(diff.worst, lessThanOrEqualTo(10), reason: 'worst channel delta');
+  });
+
+  testWidgets('the sample follows the screen while the list scrolls', (
+    tester,
+  ) async {
+    await prepare(tester);
+    const scrollTo = 140.0;
+
+    Future<ByteData> render(Widget card) async {
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(_scrolled(source, card, controller));
+      await _settle(tester);
+      controller.jumpTo(scrollTo);
+      await _settle(tester);
+      return _capture(tester);
+    }
+
+    final reference = await render(
+      BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: _cardSigma, sigmaY: _cardSigma),
+        child: _fill,
+      ),
+    );
+    final sampled = await render(CardBackdropSample(data: data, child: _fill));
+
+    final diff = _compare(sampled, reference);
+    // The card ends up 140px further up the screen than it started, over a
+    // different part of the background.
+    expect(diff.mean, lessThan(1), reason: 'mean channel delta');
+    expect(diff.worst, lessThanOrEqualTo(10), reason: 'worst channel delta');
+
+    // The result above is necessary but not sufficient: this harness repaints
+    // the list's children on a jumpTo, where a real scroll only moves their
+    // layers. So assert the mechanism separately — the placement has to be
+    // recomputed while the scene is built, not while the box is painted.
+    final sample = tester.renderObject<RenderCardBackdropSample>(
+      find.byType(CardBackdropSample),
+    );
+    expect(sample.debugPlacesPerScene, isTrue);
   });
 
   testWidgets('a closed scope hands out no backdrop', (tester) async {

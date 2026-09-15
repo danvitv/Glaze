@@ -123,6 +123,9 @@ class GlassSurface extends ConsumerWidget {
         (batterySaver ||
             PerfDebug.noGlassBlur ||
             blurViaWebView ||
+            // A flat opaque fill blurs to itself: the pass would cost a
+            // backdrop read and produce the colour that is already there.
+            FlatBackdrop.of(context) ||
             fillColor.a >= 1.0)
         ? 0.0
         : preset.elementBlur;
@@ -285,4 +288,28 @@ class _GlassBackdropScope extends InheritedWidget {
   @override
   bool updateShouldNotify(covariant _GlassBackdropScope oldWidget) =>
       oldWidget.backdropKey != backdropKey;
+}
+
+/// Marks a subtree whose backdrop is a flat, opaque fill, so a [GlassSurface]
+/// inside it skips its blur: blurring one uniform colour gives that colour
+/// back, and the pass is a backdrop read and a render target for nothing.
+///
+/// The surfaces keep their tint, border and grain — only the blur goes. Set it
+/// where the fill is known to be both opaque and uniform under everything in
+/// the subtree, as an opaque modal sheet is: its cards sit on the sheet's own
+/// colour and never overlap each other. It does not hold for chrome painted
+/// over scrolling content, which is why a sheet marks its body and not its
+/// header.
+class FlatBackdrop extends InheritedWidget {
+  /// False re-opens the blur for a subtree of a marked one.
+  final bool flat;
+
+  const FlatBackdrop({super.key, required this.flat, required super.child});
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FlatBackdrop>()?.flat ?? false;
+
+  @override
+  bool updateShouldNotify(covariant FlatBackdrop oldWidget) =>
+      oldWidget.flat != flat;
 }

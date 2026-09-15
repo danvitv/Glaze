@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
@@ -285,18 +284,23 @@ class RenderCardBackdropSample extends RenderProxyBox {
   CardBackdropData _data;
   set data(CardBackdropData value) {
     if (identical(value, _data)) return;
+    final changedTexture =
+        value.image != _data.image || value.scale != _data.scale;
     _data = value;
-    _shader = null;
+    if (changedTexture) {
+      (layer as _CardBackdropSampleLayer?)?.data = value;
+    }
     markNeedsPaint();
   }
 
-  ui.ImageShader? _shader;
-  Float64List? _shaderMatrix;
-
-  /// The matrix the last shader was built for. Test-only hook: it is what
-  /// decides whether the texture stays pinned to the screen.
-  @visibleForTesting
-  Float64List? get debugShaderMatrix => _shaderMatrix;
+  // Composited so the texture can be placed by a layer rather than by a paint
+  // call. Where the texture lands depends on where this box ends up *on
+  // screen*, and a scrolling list moves its children by mutating layer offsets
+  // without repainting them — a position computed in `paint` would be frozen at
+  // whatever it was when the card was last painted, and the backdrop would
+  // scroll along with the card instead of staying put behind it.
+  @override
+  bool get alwaysNeedsCompositing => true;
 
   @override
   void paint(PaintingContext context, Offset offset) {
@@ -304,52 +308,127 @@ class RenderCardBackdropSample extends RenderProxyBox {
       super.paint(context, offset);
       return;
     }
-    // Pin the texture to the *screen*, not to this box. A real BackdropFilter
-    // reads pixels that are already on screen, so a card under any transform —
-    // the Android overscroll stretch (a plain scale Transform in this app), a
-    // route slide, the desktop floating window — shows an untransformed
-    // backdrop through a transformed card. Sampling an axis-aligned crop with
-    // `localToGlobal` would instead drag the backdrop along with the card.
-    final inverse = Matrix4.tryInvert(getTransformTo(null));
-    if (inverse == null) {
-      // Degenerate transform (a zero-scale transition); nothing sensible to
-      // sample, and the surface's own fill still paints below.
-      super.paint(context, offset);
-      return;
-    }
-    // texel -> screen logical -> this box's local -> canvas
-    final matrix = Matrix4.translationValues(offset.dx, offset.dy, 0)
-      ..multiply(inverse)
-      ..multiply(Matrix4.diagonal3Values(1 / _data.scale, 1 / _data.scale, 1));
-    final storage = matrix.storage;
-    if (_shader == null || !_sameMatrix(storage)) {
-      _shader?.dispose();
-      _shaderMatrix = Float64List.fromList(storage);
-      _shader = ui.ImageShader(
-        _data.image,
-        TileMode.clamp,
-        TileMode.clamp,
-        storage,
-        filterQuality: FilterQuality.medium,
-      );
-    }
-    context.canvas.drawRect(offset & size, Paint()..shader = _shader);
-    super.paint(context, offset);
+    // Held through [RenderObject.layer], which ref-counts it: the scene keeps a
+    // handle of its own, so the layer must not be disposed from here.
+    final sample =
+        (layer as _CardBackdropSampleLayer?) ?? _CardBackdropSampleLayer();
+    layer = sample;
+    sample
+      ..renderObject = this
+      ..data = _data
+      ..contentSize = size
+      ..paintOffset = offset;
+    context.pushLayer(sample, super.paint, offset);
   }
 
-  bool _sameMatrix(Float64List storage) {
-    final previous = _shaderMatrix;
-    if (previous == null) return false;
-    for (var i = 0; i < storage.length; i++) {
-      if (previous[i] != storage[i]) return false;
+  /// Whether the placement is recomputed on every scene build rather than only
+  /// when this box repaints. Test-only: it is the whole reason the texture
+  /// stays on the screen instead of riding along with a card that a list moved
+  /// by mutating layer offsets.
+  @visibleForTesting
+  bool get debugPlacesPerScene =>
+      (layer as _CardBackdropSampleLayer?)?.alwaysNeedsAddToScene ?? false;
+}
+
+/// Places the baked backdrop in *screen* space under its children.
+///
+/// The work is done in [addToScene] rather than in a paint call because that is
+/// the only point at which this box's position on screen is known for the frame
+/// being built: layers move without repainting. The picture it draws is
+/// recorded once per texture — only the transform that places it changes from
+/// frame to frame, which is a few matrix pushes, not a re-render.
+class _CardBackdropSampleLayer extends ContainerLayer {
+  RenderCardBackdropSample? renderObject;
+
+  CardBackdropData? _data;
+  set data(CardBackdropData value) {
+    if (_data == null ||
+        _data!.image != value.image ||
+        _data!.scale != value.scale) {
+      _picture?.dispose();
+      _picture = null;
     }
-    return true;
+    _data = value;
   }
+
+  Size contentSize = Size.zero;
+  Offset paintOffset = Offset.zero;
+
+  ui.Picture? _picture;
+  ui.EngineLayer? _clipEngineLayer;
+  ui.EngineLayer? _transformEngineLayer;
+
+  // Re-added on every frame it is part of: nothing else can tell this layer
+  // that an ancestor moved it. [markNeedsAddToScene] is therefore never called
+  // on it, which is what the base class asks of a layer that sets this.
+  @override
+  bool get alwaysNeedsAddToScene => true;
 
   @override
   void dispose() {
-    _shader?.dispose();
-    _shader = null;
+    _picture?.dispose();
+    _picture = null;
+    renderObject = null;
     super.dispose();
+  }
+
+  /// The texture drawn at its natural size in screen coordinates. Constant for
+  /// a given texture — placing it is the transform's job.
+  ui.Picture _screenPicture(CardBackdropData data) {
+    final existing = _picture;
+    if (existing != null) return existing;
+    final bounds = Rect.fromLTWH(
+      0,
+      0,
+      data.image.width / data.scale,
+      data.image.height / data.scale,
+    );
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, bounds);
+    paintImage(
+      canvas: canvas,
+      rect: bounds,
+      image: data.image,
+      // `fill`, not `cover`: the texture already is the screen it was baked
+      // for, and covering again would re-crop it by the bake's pixel rounding.
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.medium,
+    );
+    return _picture = recorder.endRecording();
+  }
+
+  @override
+  void addToScene(ui.SceneBuilder builder) {
+    final data = _data;
+    final target = renderObject;
+    if (data != null &&
+        target != null &&
+        target.attached &&
+        !contentSize.isEmpty) {
+      // Screen -> this box's local space -> the space the children were painted
+      // in. A real backdrop filter reads pixels that are already on screen, so
+      // a card under any transform — the overscroll stretch, a route slide —
+      // must show an untransformed backdrop through it.
+      final inverse = Matrix4.tryInvert(target.getTransformTo(null));
+      if (inverse != null) {
+        final placement = Matrix4.translationValues(
+          paintOffset.dx,
+          paintOffset.dy,
+          0,
+        )..multiply(inverse);
+        _clipEngineLayer = builder.pushClipRect(
+          paintOffset & contentSize,
+          oldLayer: _clipEngineLayer as ui.ClipRectEngineLayer?,
+        );
+        _transformEngineLayer = builder.pushTransform(
+          placement.storage,
+          oldLayer: _transformEngineLayer as ui.TransformEngineLayer?,
+        );
+        builder.addPicture(Offset.zero, _screenPicture(data));
+        builder.pop();
+        builder.pop();
+      }
+    }
+    addChildrenToScene(builder);
   }
 }

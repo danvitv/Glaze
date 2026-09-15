@@ -20,7 +20,9 @@ void main() {
 
   Future<void> pump(WidgetTester tester, Widget child) => tester.pumpWidget(
     ProviderScope(
-      child: MaterialApp(home: Scaffold(body: Center(child: child))),
+      child: MaterialApp(
+        home: Scaffold(body: Center(child: child)),
+      ),
     ),
   );
 
@@ -49,10 +51,7 @@ void main() {
   testWidgets('surfaces outside a group stay independent', (tester) async {
     await pump(
       tester,
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [chip('a'), chip('b')],
-      ),
+      Row(mainAxisSize: MainAxisSize.min, children: [chip('a'), chip('b')]),
     );
 
     expect(keys(tester), everyElement(isNull));
@@ -131,6 +130,33 @@ void main() {
     expect(found, hasLength(2));
     expect(found.first, isNotNull);
     expect(found.last, isNull);
+  });
+
+  testWidgets('a flat opaque backdrop drops the blur but keeps the fill', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      FlatBackdrop(
+        flat: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            chip('a'),
+            // A subtree can re-open the blur where the fill below it is not
+            // flat after all.
+            FlatBackdrop(flat: false, child: chip('b')),
+          ],
+        ),
+      ),
+    );
+
+    // Blurring one uniform colour returns that colour, so the marked surface
+    // paints no filter at all; the one that opted back out still does.
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    // Both still paint their tint and border — only the blur is dropped.
+    expect(find.byType(GlassSurface), findsNWidgets(2));
+    expect(find.byType(DecoratedBox), findsNWidgets(2));
   });
 
   testWidgets('the key survives a rebuild', (tester) async {
