@@ -373,14 +373,24 @@ class _CharacterCardState extends ConsumerState<CharacterCard>
   }
 
   Widget _buildPlaceholder() {
-    return Container(
-      color: _avatarColor().withValues(alpha: 0.2),
+    final color = _avatarColor();
+    // Painted solid, not as a translucent tint: a card with no artwork must not
+    // read as another glass surface with the app background showing through it.
+    // The initial sits on top in white, which stays legible over any accent.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color, Color.lerp(color, Colors.black, 0.45)!],
+        ),
+      ),
       child: Center(
         child: Text(
           _displayName.isNotEmpty ? _displayName[0].toUpperCase() : '?',
           style: TextStyle(
             fontSize: 48,
-            color: _avatarColor(),
+            color: Colors.white.withValues(alpha: 0.92),
             fontWeight: FontWeight.bold,
           ),
         ),
