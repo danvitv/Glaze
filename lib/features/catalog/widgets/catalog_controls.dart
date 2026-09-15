@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-
 import '../../../shared/theme/app_colors.dart';
+import '../../../shared/widgets/glass_surface.dart';
 import '../../../shared/widgets/list_controls.dart';
 import '../catalog_models.dart';
 import '../catalog_provider.dart';
@@ -112,7 +112,7 @@ class CatalogControls extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final enabledProviders = ref.watch(enabledCatalogProvidersProvider);
-    return Row(
+    final row = Row(
       children: [
         GlazeDropdownChip(
           label: providerLabel(state.activeProvider),
@@ -176,6 +176,10 @@ class CatalogControls extends ConsumerWidget {
         ),
       ],
     );
+
+    // One backdrop capture for the row instead of one per chip: these are
+    // plain siblings that never overlap. See [GlassBackdropGroup].
+    return GlassBackdropGroup(child: row);
   }
 }
 
@@ -196,4 +200,3 @@ class _SettingsGearButton extends StatelessWidget {
     );
   }
 }
-

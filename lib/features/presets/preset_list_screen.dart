@@ -707,7 +707,7 @@ class _PresetListScreenState extends ConsumerState<PresetListScreen> {
       builder: (context, ref, _) {
         final mode =
             ref.watch(presetSortProvider).value?.mode ?? PresetSortMode.manual;
-        return Row(
+        final row = Row(
           children: [
             GlazeDropdownChip(
               label: _typeLabel(_typeFilter),
@@ -735,6 +735,10 @@ class _PresetListScreenState extends ConsumerState<PresetListScreen> {
             ),
           ],
         );
+
+        // One backdrop capture for the row instead of one per chip: these are
+        // plain siblings that never overlap. See [GlassBackdropGroup].
+        return GlassBackdropGroup(child: row);
       },
     );
   }

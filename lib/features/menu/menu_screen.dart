@@ -11,6 +11,7 @@ import '../../shared/shell/desktop/desktop_glossary_popup.dart';
 import '../../shared/shell/desktop/desktop_floating_provider.dart';
 import '../../core/models/chat_message.dart';
 import '../chat/widgets/triggered_items_sheet.dart';
+import '../../shared/widgets/glass_surface.dart';
 import '../../shared/widgets/glaze_error_dialog.dart';
 import '../../core/services/generation_notification_service.dart';
 import '../../core/state/dev_mode_provider.dart';
@@ -247,292 +248,309 @@ class _MenuScreenState extends ConsumerState<MenuScreen> with ShellHeaderMixin {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          ListView(
-            controller: _scrollController,
-            padding: listPadding,
-            children: [
-              MenuGroup(
-                header: 'section_settings'.tr(),
-                headerIcon: Icons.settings_rounded,
-                items: [
-                  MenuItem(
-                    icon: Icons.settings_outlined,
-                    label: 'menu_app_settings'.tr(),
-                    subtitle: 'menu_app_settings_hint'.tr(),
-                    onTap: () =>
-                        goOrFloat(context, ref, 'settings', push: true),
-                  ),
-                  MenuItem(
-                    icon: Icons.extension_outlined,
-                    label: 'menu_third_party_providers'.tr(),
-                    subtitle: 'menu_third_party_providers_hint'.tr(),
-                    onTap: () => openThirdPartyProvidersScreen(context),
-                  ),
-                ],
-              ),
-              MenuGroup(
-                header: 'section_data'.tr(),
-                headerIcon: Icons.storage_rounded,
-                items: [
-                  MenuItem(
-                    icon: Icons.backup_outlined,
-                    label: 'menu_backups'.tr(),
-                    subtitle: 'menu_backups_hint'.tr(),
-                    onTap: () => isDesktopLayout(context)
-                        ? goOrFloat(context, ref, 'backup', push: true)
-                        : openBackupsSheet(context),
-                  ),
-                  MenuItem(
-                    icon: Icons.sync_rounded,
-                    label: 'menu_cloud_sync'.tr(),
-                    subtitle: 'menu_cloud_sync_hint'.tr(),
-                    onTap: () => isDesktopLayout(context)
-                        ? goOrFloat(context, ref, 'sync', push: true)
-                        : openCloudSyncSheet(context),
-                  ),
-                ],
-              ),
-              if (ref.watch(devModeProvider))
+          // The cards are non-overlapping siblings in one list, so the engine
+          // can blur the backdrop once for the whole screen instead of once
+          // per card. See [GlassBackdropGroup].
+          GlassBackdropGroup(
+            child: ListView(
+              controller: _scrollController,
+              padding: listPadding,
+              children: [
                 MenuGroup(
-                  header: 'menu_dev_header'.tr(),
-                  headerIcon: Icons.developer_mode_rounded,
+                  header: 'section_settings'.tr(),
+                  headerIcon: Icons.settings_rounded,
                   items: [
-                    MenuSwitchItem(
-                      label: 'menu_hide_build_date_watermark'.tr(),
-                      value: ref.watch(hideBuildWatermarkProvider),
-                      onChanged: (v) =>
-                          ref.read(hideBuildWatermarkProvider.notifier).set(v),
+                    MenuItem(
+                      icon: Icons.settings_outlined,
+                      label: 'menu_app_settings'.tr(),
+                      subtitle: 'menu_app_settings_hint'.tr(),
+                      onTap: () =>
+                          goOrFloat(context, ref, 'settings', push: true),
                     ),
                     MenuItem(
-                      icon: Icons.widgets_outlined,
-                      label: 'menu_menu_group_demo'.tr(),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const MenuGroupDemoScreen(),
-                        ),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.refresh_rounded,
-                      label: 'menu_spinner_demo'.tr(),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const SpinnerDemoScreen(),
-                        ),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.notifications_active_outlined,
-                      label: 'menu_notifications_test'.tr(),
-                      onTap: _sendTestNotification,
-                    ),
-                    const MenuSubHeader('Connections sheets'),
-                    MenuItem(
-                      icon: Icons.person_outline,
-                      label: 'Persona connections',
-                      onTap: () => _openConnectionsTest(
-                        id: ref
-                            .read(personaListProvider)
-                            .value
-                            ?.firstOrNull
-                            ?.id,
-                        emptyMsg: 'No personas to preview',
-                        open: (id) => showPersonaConnections(context, id),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.tune,
-                      label: 'Preset connections',
-                      onTap: () => _openConnectionsTest(
-                        id: ref.read(presetListProvider).value?.firstOrNull?.id,
-                        emptyMsg: 'No presets to preview',
-                        open: (id) => showPresetConnections(context, id),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.menu_book_outlined,
-                      label: 'Lorebook connections',
-                      onTap: () => _openConnectionsTest(
-                        id: ref.read(lorebooksProvider).value?.firstOrNull?.id,
-                        emptyMsg: 'No lorebooks to preview',
-                        open: (id) => showLorebookConnections(context, id),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.auto_stories_outlined,
-                      label: 'Janitor: extract card + lorebook',
-                      onTap: () => showJanitorExtractSheet(context),
-                    ),
-                    MenuItem(
-                      icon: Icons.bookmarks_outlined,
-                      label: 'Triggered Items Sheet',
-                      onTap: () => showTriggeredItemsSheet(
-                        context,
-                        lorebooks: const [
-                          TriggeredEntry(
-                            id: 'lb1',
-                            name: 'Kingdom of Eldoria',
-                            lorebookName: 'World Lore',
-                            source: 'keyword',
-                          ),
-                          TriggeredEntry(
-                            id: 'lb2',
-                            name: 'Ancient Prophecy',
-                            lorebookName: 'World Lore',
-                            source: 'vector',
-                          ),
-                        ],
-                        memories: const [
-                          TriggeredEntry(
-                            id: 'mem1',
-                            name: 'First meeting at the tavern',
-                            source: 'memory',
-                          ),
-                        ],
-                        regexes: const [
-                          TriggeredEntry(
-                            id: 'rx1',
-                            name: 'Strip OOC blocks',
-                            source: 'regex',
-                            pattern: r'\(\(.*?\)\)',
-                          ),
-                          TriggeredEntry(
-                            id: 'rx2',
-                            name: 'Trim trailing whitespace',
-                            source: 'regex',
-                          ),
-                        ],
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.warning_amber_rounded,
-                      label: 'menu_test_error_dialog'.tr(),
-                      onTap: () => GlazeErrorDialog.show(
-                        context,
-                        Exception(
-                          'HTTP 401: Invalid API key\n\n'
-                          'The request was rejected by the remote server. '
-                          'Please verify that your API key is correct and has '
-                          'not expired. Keys can be revoked from the provider '
-                          'dashboard at any time without notice.\n\n'
-                          'Endpoint:  https://api.openai.com/v1/chat/completions\n'
-                          'Model:     gpt-4o\n'
-                          'Status:    401 Unauthorized\n'
-                          'Request:   POST /v1/chat/completions\n'
-                          'Trace-ID:  req_abc123def456ghi789\n\n'
-                          '{"error":{"message":"Incorrect API key provided: '
-                          'sk-proj-...xXxX. You can find your API key at '
-                          'https://platform.openai.com/account/api-keys.",'
-                          '"type":"invalid_request_error","param":null,'
-                          '"code":"invalid_api_key"}}',
-                        ),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.system_update_alt_rounded,
-                      label: 'menu_test_update_dialog'.tr(),
-                      onTap: () => showUpdateDialog(
-                        context,
-                        UpdateInfo(
-                          source: UpdateSource.ciBuild,
-                          dismissId: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-                          label: '#123',
-                          createdAt: DateTime.now().toUtc(),
-                          url: 'https://github.com/hydall/Glaze/actions',
-                          notes: const [
-                            'folders ux/ui',
-                            'fix random character button',
-                            'Fix extblock image generation races',
-                            'tools screen expansion, chat list fix',
-                            'Update Lucy pick card',
-                          ],
-                          totalNotes: 13,
-                        ),
-                      ),
-                    ),
-                    MenuItem(
-                      icon: Icons.new_releases_outlined,
-                      label: 'menu_test_update_dialog_release'.tr(),
-                      onTap: () => showUpdateDialog(
-                        context,
-                        UpdateInfo(
-                          source: UpdateSource.release,
-                          dismissId: 'v0.8.0',
-                          label: 'v0.8.0',
-                          createdAt: DateTime.now().toUtc(),
-                          url:
-                              'https://github.com/hydall/Glaze/releases/latest',
-                          notes: const [
-                            'Memory book rework',
-                            'Cloud sync conflict resolution',
-                            'Studio agent presets',
-                          ],
-                          totalNotes: 3,
-                        ),
-                      ),
+                      icon: Icons.extension_outlined,
+                      label: 'menu_third_party_providers'.tr(),
+                      subtitle: 'menu_third_party_providers_hint'.tr(),
+                      onTap: () => openThirdPartyProvidersScreen(context),
                     ),
                   ],
                 ),
-              MenuGroup(
-                header: 'section_info'.tr(),
-                headerIcon: Icons.info_rounded,
-                items: [
-                  MenuItem(
-                    icon: Icons.info_outline_rounded,
-                    label: 'menu_about'.tr(),
-                    subtitle: 'menu_about_hint'.tr(),
-                    onTap: () => goOrFloat(context, ref, 'about', push: true),
-                  ),
-                  MenuItem(
-                    icon: Icons.menu_book_rounded,
-                    label: 'menu_glossary'.tr(),
-                    subtitle: 'menu_glossary_hint'.tr(),
-                    onTap: () {
-                      if (!isDesktopLayout(context)) {
-                        context.push('/menu/glossary');
-                      } else if (ref.read(glossaryPopupVisibleProvider)) {
-                        ref.read(glossaryPopupVisibleProvider.notifier).state =
-                            false;
-                      } else {
-                        openGlossaryPopup(ref);
-                      }
-                    },
-                  ),
-                  if (lang == 'en')
+                MenuGroup(
+                  header: 'section_data'.tr(),
+                  headerIcon: Icons.storage_rounded,
+                  items: [
                     MenuItem(
-                      iconWidget: SvgPicture.asset(
-                        'assets/logos/discord.svg',
-                        colorFilter: const ColorFilter.mode(
-                          Color(0xFF5865F2),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                      label: 'about_discord'.tr(),
-                      subtitle: 'about_join_community'.tr(),
-                      onTap: () => _openLink('https://discord.gg/jnGhd7p6Ht'),
-                    )
-                  else
-                    MenuItem(
-                      iconWidget: SvgPicture.asset(
-                        'assets/logos/telegram.svg',
-                        colorFilter: const ColorFilter.mode(
-                          Color(0xFF2AABEE),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                      label: 'about_telegram'.tr(),
-                      subtitle: 'about_join_community'.tr(),
-                      onTap: () => _openLink('https://t.me/glazeapp'),
+                      icon: Icons.backup_outlined,
+                      label: 'menu_backups'.tr(),
+                      subtitle: 'menu_backups_hint'.tr(),
+                      onTap: () => isDesktopLayout(context)
+                          ? goOrFloat(context, ref, 'backup', push: true)
+                          : openBackupsSheet(context),
                     ),
-                  MenuItem(
-                    icon: Icons.replay_rounded,
-                    label: 'onboarding_replay'.tr(),
-                    subtitle: 'onboarding_replay_hint'.tr(),
-                    onTap: () => replayOnboarding(context),
+                    MenuItem(
+                      icon: Icons.sync_rounded,
+                      label: 'menu_cloud_sync'.tr(),
+                      subtitle: 'menu_cloud_sync_hint'.tr(),
+                      onTap: () => isDesktopLayout(context)
+                          ? goOrFloat(context, ref, 'sync', push: true)
+                          : openCloudSyncSheet(context),
+                    ),
+                  ],
+                ),
+                if (ref.watch(devModeProvider))
+                  MenuGroup(
+                    header: 'menu_dev_header'.tr(),
+                    headerIcon: Icons.developer_mode_rounded,
+                    items: [
+                      MenuSwitchItem(
+                        label: 'menu_hide_build_date_watermark'.tr(),
+                        value: ref.watch(hideBuildWatermarkProvider),
+                        onChanged: (v) => ref
+                            .read(hideBuildWatermarkProvider.notifier)
+                            .set(v),
+                      ),
+                      MenuItem(
+                        icon: Icons.widgets_outlined,
+                        label: 'menu_menu_group_demo'.tr(),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const MenuGroupDemoScreen(),
+                          ),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.refresh_rounded,
+                        label: 'menu_spinner_demo'.tr(),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SpinnerDemoScreen(),
+                          ),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.notifications_active_outlined,
+                        label: 'menu_notifications_test'.tr(),
+                        onTap: _sendTestNotification,
+                      ),
+                      const MenuSubHeader('Connections sheets'),
+                      MenuItem(
+                        icon: Icons.person_outline,
+                        label: 'Persona connections',
+                        onTap: () => _openConnectionsTest(
+                          id: ref
+                              .read(personaListProvider)
+                              .value
+                              ?.firstOrNull
+                              ?.id,
+                          emptyMsg: 'No personas to preview',
+                          open: (id) => showPersonaConnections(context, id),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.tune,
+                        label: 'Preset connections',
+                        onTap: () => _openConnectionsTest(
+                          id: ref
+                              .read(presetListProvider)
+                              .value
+                              ?.firstOrNull
+                              ?.id,
+                          emptyMsg: 'No presets to preview',
+                          open: (id) => showPresetConnections(context, id),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.menu_book_outlined,
+                        label: 'Lorebook connections',
+                        onTap: () => _openConnectionsTest(
+                          id: ref
+                              .read(lorebooksProvider)
+                              .value
+                              ?.firstOrNull
+                              ?.id,
+                          emptyMsg: 'No lorebooks to preview',
+                          open: (id) => showLorebookConnections(context, id),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.auto_stories_outlined,
+                        label: 'Janitor: extract card + lorebook',
+                        onTap: () => showJanitorExtractSheet(context),
+                      ),
+                      MenuItem(
+                        icon: Icons.bookmarks_outlined,
+                        label: 'Triggered Items Sheet',
+                        onTap: () => showTriggeredItemsSheet(
+                          context,
+                          lorebooks: const [
+                            TriggeredEntry(
+                              id: 'lb1',
+                              name: 'Kingdom of Eldoria',
+                              lorebookName: 'World Lore',
+                              source: 'keyword',
+                            ),
+                            TriggeredEntry(
+                              id: 'lb2',
+                              name: 'Ancient Prophecy',
+                              lorebookName: 'World Lore',
+                              source: 'vector',
+                            ),
+                          ],
+                          memories: const [
+                            TriggeredEntry(
+                              id: 'mem1',
+                              name: 'First meeting at the tavern',
+                              source: 'memory',
+                            ),
+                          ],
+                          regexes: const [
+                            TriggeredEntry(
+                              id: 'rx1',
+                              name: 'Strip OOC blocks',
+                              source: 'regex',
+                              pattern: r'\(\(.*?\)\)',
+                            ),
+                            TriggeredEntry(
+                              id: 'rx2',
+                              name: 'Trim trailing whitespace',
+                              source: 'regex',
+                            ),
+                          ],
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.warning_amber_rounded,
+                        label: 'menu_test_error_dialog'.tr(),
+                        onTap: () => GlazeErrorDialog.show(
+                          context,
+                          Exception(
+                            'HTTP 401: Invalid API key\n\n'
+                            'The request was rejected by the remote server. '
+                            'Please verify that your API key is correct and has '
+                            'not expired. Keys can be revoked from the provider '
+                            'dashboard at any time without notice.\n\n'
+                            'Endpoint:  https://api.openai.com/v1/chat/completions\n'
+                            'Model:     gpt-4o\n'
+                            'Status:    401 Unauthorized\n'
+                            'Request:   POST /v1/chat/completions\n'
+                            'Trace-ID:  req_abc123def456ghi789\n\n'
+                            '{"error":{"message":"Incorrect API key provided: '
+                            'sk-proj-...xXxX. You can find your API key at '
+                            'https://platform.openai.com/account/api-keys.",'
+                            '"type":"invalid_request_error","param":null,'
+                            '"code":"invalid_api_key"}}',
+                          ),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.system_update_alt_rounded,
+                        label: 'menu_test_update_dialog'.tr(),
+                        onTap: () => showUpdateDialog(
+                          context,
+                          UpdateInfo(
+                            source: UpdateSource.ciBuild,
+                            dismissId:
+                                'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+                            label: '#123',
+                            createdAt: DateTime.now().toUtc(),
+                            url: 'https://github.com/hydall/Glaze/actions',
+                            notes: const [
+                              'folders ux/ui',
+                              'fix random character button',
+                              'Fix extblock image generation races',
+                              'tools screen expansion, chat list fix',
+                              'Update Lucy pick card',
+                            ],
+                            totalNotes: 13,
+                          ),
+                        ),
+                      ),
+                      MenuItem(
+                        icon: Icons.new_releases_outlined,
+                        label: 'menu_test_update_dialog_release'.tr(),
+                        onTap: () => showUpdateDialog(
+                          context,
+                          UpdateInfo(
+                            source: UpdateSource.release,
+                            dismissId: 'v0.8.0',
+                            label: 'v0.8.0',
+                            createdAt: DateTime.now().toUtc(),
+                            url:
+                                'https://github.com/hydall/Glaze/releases/latest',
+                            notes: const [
+                              'Memory book rework',
+                              'Cloud sync conflict resolution',
+                              'Studio agent presets',
+                            ],
+                            totalNotes: 3,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+                MenuGroup(
+                  header: 'section_info'.tr(),
+                  headerIcon: Icons.info_rounded,
+                  items: [
+                    MenuItem(
+                      icon: Icons.info_outline_rounded,
+                      label: 'menu_about'.tr(),
+                      subtitle: 'menu_about_hint'.tr(),
+                      onTap: () => goOrFloat(context, ref, 'about', push: true),
+                    ),
+                    MenuItem(
+                      icon: Icons.menu_book_rounded,
+                      label: 'menu_glossary'.tr(),
+                      subtitle: 'menu_glossary_hint'.tr(),
+                      onTap: () {
+                        if (!isDesktopLayout(context)) {
+                          context.push('/menu/glossary');
+                        } else if (ref.read(glossaryPopupVisibleProvider)) {
+                          ref
+                                  .read(glossaryPopupVisibleProvider.notifier)
+                                  .state =
+                              false;
+                        } else {
+                          openGlossaryPopup(ref);
+                        }
+                      },
+                    ),
+                    if (lang == 'en')
+                      MenuItem(
+                        iconWidget: SvgPicture.asset(
+                          'assets/logos/discord.svg',
+                          colorFilter: const ColorFilter.mode(
+                            Color(0xFF5865F2),
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                        label: 'about_discord'.tr(),
+                        subtitle: 'about_join_community'.tr(),
+                        onTap: () => _openLink('https://discord.gg/jnGhd7p6Ht'),
+                      )
+                    else
+                      MenuItem(
+                        iconWidget: SvgPicture.asset(
+                          'assets/logos/telegram.svg',
+                          colorFilter: const ColorFilter.mode(
+                            Color(0xFF2AABEE),
+                            BlendMode.srcIn,
+                          ),
+                        ),
+                        label: 'about_telegram'.tr(),
+                        subtitle: 'about_join_community'.tr(),
+                        onTap: () => _openLink('https://t.me/glazeapp'),
+                      ),
+                    MenuItem(
+                      icon: Icons.replay_rounded,
+                      label: 'onboarding_replay'.tr(),
+                      subtitle: 'onboarding_replay_hint'.tr(),
+                      onTap: () => replayOnboarding(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),

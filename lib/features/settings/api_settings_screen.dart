@@ -21,6 +21,7 @@ import '../../core/models/api_config.dart';
 import '../../core/models/extra_request_parameter.dart';
 import '../../core/state/shared_prefs_provider.dart';
 import '../../shared/theme/app_colors.dart';
+import '../../shared/widgets/glass_surface.dart';
 import '../../shared/widgets/glaze_bottom_sheet.dart';
 import '../../shared/widgets/glaze_spinner.dart';
 import '../../shared/widgets/glaze_tab_bar.dart';
@@ -1693,7 +1694,7 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
               ref.watch(apiPresetSortProvider).value?.mode ??
               ApiPresetSortMode.manual;
           final armed = ref.watch(apiPresetReorderArmedProvider);
-          return Row(
+          final row = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               // Only the manually ordered sheet has an order to drag rows into.
@@ -1723,6 +1724,10 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
               ),
             ],
           );
+
+          // One backdrop capture for the row instead of one per chip: these
+          // are plain siblings that never overlap. See [GlassBackdropGroup].
+          return GlassBackdropGroup(child: row);
         },
       ),
       cardsBuilder: (context, ref) {

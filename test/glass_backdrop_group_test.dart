@@ -1,0 +1,151 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:glaze_flutter/shared/widgets/glass_surface.dart';
+import 'package:glaze_flutter/shared/widgets/glaze_tab_bar.dart';
+
+/// Backdrop grouping tells the engine that several glass surfaces read the
+/// same backdrop, so it blurs once instead of once per surface. Sharing is only
+/// correct between surfaces that do not overlap — these pin down who ends up
+/// in a group and, more importantly, who does not.
+void main() {
+  Widget chip(String label) => SizedBox(
+    width: 60,
+    height: 32,
+    child: GlassSurface(
+      borderRadius: BorderRadius.circular(16),
+      child: Center(child: Text(label)),
+    ),
+  );
+
+  Future<void> pump(WidgetTester tester, Widget child) => tester.pumpWidget(
+    ProviderScope(
+      child: MaterialApp(home: Scaffold(body: Center(child: child))),
+    ),
+  );
+
+  List<BackdropKey?> keys(WidgetTester tester) => tester
+      .widgetList<BackdropFilter>(find.byType(BackdropFilter))
+      .map((f) => f.backdropGroupKey)
+      .toList();
+
+  testWidgets('siblings in a group share one backdrop key', (tester) async {
+    await pump(
+      tester,
+      GlassBackdropGroup(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [chip('a'), chip('b'), chip('c')],
+        ),
+      ),
+    );
+
+    final shared = keys(tester);
+    expect(shared, hasLength(3));
+    expect(shared.first, isNotNull);
+    expect(shared.every((k) => identical(k, shared.first)), isTrue);
+  });
+
+  testWidgets('surfaces outside a group stay independent', (tester) async {
+    await pump(
+      tester,
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [chip('a'), chip('b')],
+      ),
+    );
+
+    expect(keys(tester), everyElement(isNull));
+  });
+
+  testWidgets('a nested surface does not join its parent group', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      GlassBackdropGroup(
+        child: SizedBox(
+          width: 120,
+          height: 48,
+          child: GlassSurface(
+            borderRadius: BorderRadius.circular(16),
+            // Stands for the active pill inside a tab strip: it is painted
+            // over its parent's own blur, so it can never read the same
+            // capture.
+            child: chip('pill'),
+          ),
+        ),
+      ),
+    );
+
+    final found = keys(tester);
+    expect(found, hasLength(2));
+    // Outer surface is in the group, the one inside it is not.
+    expect(found.first, isNotNull);
+    expect(found.last, isNull);
+  });
+
+  testWidgets('an explicitly closed subtree leaves the group', (tester) async {
+    await pump(
+      tester,
+      GlassBackdropGroup(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            chip('grouped'),
+            GlassBackdropGroup.none(child: chip('excluded')),
+          ],
+        ),
+      ),
+    );
+
+    final found = keys(tester);
+    expect(found, hasLength(2));
+    expect(found.first, isNotNull);
+    expect(found.last, isNull);
+  });
+
+  testWidgets('a tab strip inside a group keeps its pill ungrouped', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      GlassBackdropGroup(
+        child: SizedBox(
+          width: 320,
+          child: GlazeTabBar(
+            tabs: const [
+              GlazeTabItem(label: 'One', icon: Icons.circle_outlined),
+              GlazeTabItem(label: 'Two', icon: Icons.circle_outlined),
+            ],
+            activeIndex: 0,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final found = keys(tester);
+    // The strip joins the group; the active pill sitting on top of it does not
+    // — it is painted over the strip's own blur.
+    expect(found, hasLength(2));
+    expect(found.first, isNotNull);
+    expect(found.last, isNull);
+  });
+
+  testWidgets('the key survives a rebuild', (tester) async {
+    Future<BackdropKey?> keyAfterPump(String label) async {
+      await pump(
+        tester,
+        GlassBackdropGroup(key: const ValueKey('group'), child: chip(label)),
+      );
+      return keys(tester).single;
+    }
+
+    final first = await keyAfterPump('a');
+    final second = await keyAfterPump('b');
+    // A new key per build would mean a new capture every frame — the opposite of
+    // what the group is for.
+    expect(identical(first, second), isTrue);
+  });
+}
