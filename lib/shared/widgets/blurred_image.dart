@@ -86,7 +86,13 @@ class _BlurredImageState extends State<BlurredImage> {
   @override
   void didUpdateWidget(covariant BlurredImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.image != oldWidget.image) _resolveSource();
+    // Re-resolve on a sigma change too. A surface that started with no blur
+    // (sigma 0, e.g. Battery Saver ON when the app booted) never resolved a
+    // source, so switching the blur on would otherwise have nothing to bake and
+    // the background would stay blank until the image itself changed.
+    if (widget.image != oldWidget.image || widget.sigma != oldWidget.sigma) {
+      _resolveSource();
+    }
   }
 
   @override
@@ -284,10 +290,11 @@ class _BakeKey {
       other.provider == provider &&
       other.sigma == sigma &&
       other.width == width &&
-      other.height == height;
+      other.height == height &&
+      other.scale == scale;
 
   @override
-  int get hashCode => Object.hash(provider, sigma, width, height);
+  int get hashCode => Object.hash(provider, sigma, width, height, scale);
 }
 
 /// App-wide store of baked blurs.

@@ -174,4 +174,27 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(tester.widget<Image>(find.byType(Image)).fit, BoxFit.cover);
   });
+
+  testWidgets('bakes after the blur is switched on, without an image change', (
+    tester,
+  ) async {
+    png = (await tester.runAsync(_sourcePng))!;
+    BlurredImage.debugResetBakeCount();
+
+    // Boot with no blur — the Battery Saver ON case — so no source is ever
+    // resolved.
+    await tester.pumpWidget(
+      _boxed(BlurredImage(image: MemoryImage(png), sigma: 0)),
+    );
+    await _settle(tester);
+    expect(BlurredImage.debugBakeCount, 0);
+
+    // Battery Saver OFF: same image, blur switched on.
+    await tester.pumpWidget(
+      _boxed(BlurredImage(image: MemoryImage(png), sigma: 6)),
+    );
+    await _settle(tester);
+
+    expect(BlurredImage.debugBakeCount, 1);
+  });
 }
