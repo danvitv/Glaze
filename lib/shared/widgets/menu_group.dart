@@ -251,6 +251,10 @@ class MenuGroup extends StatelessWidget {
         enableRipple: true,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: context.cs.outlineVariant),
+        // A group card only ever has the static app background behind it (the
+        // list itself does not paint anything under a card), so it can read the
+        // once-baked backdrop texture instead of blurring per frame.
+        backdropSample: true,
         child: body,
       ),
     );

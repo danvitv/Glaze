@@ -10,6 +10,7 @@ import '../theme/theme_preset.dart';
 import '../theme/theme_provider.dart';
 import 'glow_ripple.dart';
 import 'noise_overlay.dart';
+import 'card_backdrop.dart';
 
 /// Reusable glassmorphic surface that reads `elementOpacity` / `elementBlur` /
 /// `noiseOpacity` / `noiseIntensity` from the active theme preset.
@@ -57,6 +58,14 @@ class GlassSurface extends ConsumerWidget {
   /// the live content beneath it.
   final BackdropKey? backdropKey;
 
+  /// Samples a once-baked, already-blurred app-background texture for this
+  /// surface's backdrop instead of running a `BackdropFilter`. Only valid when
+  /// the surface sits over the *static* app background (which does not scroll;
+  /// content scrolls over it) — a `MenuGroup` card, not a header over a list.
+  /// Falls back to a normal `BackdropFilter` when there is no background image
+  /// or the texture is not baked yet.
+  final bool backdropSample;
+
   const GlassSurface({
     super.key,
     required this.child,
@@ -72,6 +81,7 @@ class GlassSurface extends ConsumerWidget {
     this.rippleIntensity = 0.15,
     this.blurViaWebView = false,
     this.backdropKey,
+    this.backdropSample = false,
   });
 
   @override
@@ -165,6 +175,10 @@ class GlassSurface extends ConsumerWidget {
           )
         : filled;
 
+    final sample = (backdropSample && !batterySaver && blur > 0)
+        ? CardBackdrop.of(context)
+        : null;
+
     final surface = ClipRRect(
       borderRadius: borderRadius,
       // Grouping is opt-in per surface ([backdropKey] / [GlassBackdropGroup])
@@ -178,11 +192,13 @@ class GlassSurface extends ConsumerWidget {
       // judgement each call site has to make.
       child: blur > 0
           ? RepaintBoundary(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                backdropGroupKey: groupKey,
-                child: withNoise,
-              ),
+              child: sample != null
+                  ? CardBackdropSample(data: sample, child: withNoise)
+                  : BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                      backdropGroupKey: groupKey,
+                      child: withNoise,
+                    ),
             )
           : withNoise,
     );

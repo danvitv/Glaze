@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import '../theme/theme_font_provider.dart';
 import '../theme/theme_provider.dart';
 import 'blurred_image.dart';
+import 'card_backdrop.dart';
 import 'noise_overlay.dart';
 
 class GlazeBackground extends ConsumerWidget {
@@ -65,7 +66,17 @@ class GlazeBackground extends ConsumerWidget {
           // first grouped filter paints — so a nav bar or header drawn after
           // the scrolling body would blur the app background instead of the
           // content actually under it. See the note in [GlassSurface].
-          child,
+          //
+          // [CardBackdrop] instead bakes the background blurred once so that
+          // surfaces opting in with `GlassSurface.backdropSample` can read it
+          // as a texture instead of each blurring the backdrop per frame.
+          bytes != null && preset.elementBlur > 0 && !batterySaver
+              ? CardBackdrop(
+                  image: MemoryImage(bytes),
+                  sigma: preset.elementBlur,
+                  child: child,
+                )
+              : child,
         ],
       ),
     );
