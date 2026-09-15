@@ -226,6 +226,41 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
     });
   }
 
+  /// Whether the screen's content may be built yet.
+  ///
+  /// Building it is not cheap — three tabs of grouped settings, each a long
+  /// list — and doing that in the frame that pushes the route is why the sheet
+  /// looked slow to open: the route was there immediately, but its first frame
+  /// took long enough to read as a delay, and the slide-in inherited the cost.
+  /// The sheet now goes up straight away showing the spinner it would have
+  /// shown for a cold load anyway, and the content is built once the entrance
+  /// transition is done.
+  bool _revealed = false;
+  Animation<double>? _revealAnimation;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_revealed || _revealAnimation != null) return;
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == null || animation.isCompleted) {
+      // No transition to wait for — a hosted panel, or a route that is already
+      // settled. One frame is still enough to get the chrome up first.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+      return;
+    }
+    _revealAnimation = animation..addStatusListener(_onRevealStatus);
+  }
+
+  void _onRevealStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) _reveal();
+  }
+
+  void _reveal() {
+    if (_revealed || !mounted) return;
+    setState(() => _revealed = true);
+  }
+
   @override
   void deactivate() {
     // This screen is presented two ways: a fullscreen route (Tools → API) and
@@ -243,6 +278,7 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
   @override
   void dispose() {
     _flushSave();
+    _revealAnimation?.removeStatusListener(_onRevealStatus);
     _llmScrollController.dispose();
     _embScrollController.dispose();
     _agentsScrollController.dispose();
@@ -616,38 +652,41 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
       headerBottom: list.isEmpty && embeddingList.isEmpty
           ? null
           : _buildTabBar(),
-      body: asyncList.when(
-        loading: () => const Center(child: GlazeSpinner()),
-        error: (e, _) => Center(child: Text('${'title_error'.tr()}: $e')),
-        data: (list) => list.isEmpty && embeddingList.isEmpty
-            ? _buildEmptyState(forEmbedding: false)
-            : SwipeTabSwitcher(
-                index: _tab,
-                length: 3,
-                onChanged: (i) => setState(() => _tab = i),
-                child: TabSlideSwitcher(
-                  index: _tab,
-                  child: switch (_tab) {
-                    0 =>
-                      list.isEmpty
-                          ? _buildEmptyState(forEmbedding: false)
-                          : _buildLlmTab(list, activeName),
-                    1 =>
-                      embeddingList.isEmpty
-                          ? _buildEmptyState(forEmbedding: true)
-                          : _buildEmbeddingsTab(
-                              embeddingList,
-                              list,
-                              embeddingName,
-                            ),
-                    _ => StudioSlotsTab(
-                      controller: _agentsScrollController,
-                      memoryBookSlotKey: _memoryBookSlotKey,
+      // Until the sheet is on screen, only the spinner. See [_revealed].
+      body: !_revealed
+          ? const Center(child: GlazeSpinner())
+          : asyncList.when(
+              loading: () => const Center(child: GlazeSpinner()),
+              error: (e, _) => Center(child: Text('${'title_error'.tr()}: $e')),
+              data: (list) => list.isEmpty && embeddingList.isEmpty
+                  ? _buildEmptyState(forEmbedding: false)
+                  : SwipeTabSwitcher(
+                      index: _tab,
+                      length: 3,
+                      onChanged: (i) => setState(() => _tab = i),
+                      child: TabSlideSwitcher(
+                        index: _tab,
+                        child: switch (_tab) {
+                          0 =>
+                            list.isEmpty
+                                ? _buildEmptyState(forEmbedding: false)
+                                : _buildLlmTab(list, activeName),
+                          1 =>
+                            embeddingList.isEmpty
+                                ? _buildEmptyState(forEmbedding: true)
+                                : _buildEmbeddingsTab(
+                                    embeddingList,
+                                    list,
+                                    embeddingName,
+                                  ),
+                          _ => StudioSlotsTab(
+                            controller: _agentsScrollController,
+                            memoryBookSlotKey: _memoryBookSlotKey,
+                          ),
+                        },
+                      ),
                     ),
-                  },
-                ),
-              ),
-      ),
+            ),
     );
   }
 

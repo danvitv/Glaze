@@ -22,6 +22,7 @@ import 'package:glaze_flutter/features/lorebooks/lorebook_list_screen.dart';
 import 'package:glaze_flutter/features/lorebooks/lorebook_global_settings_screen.dart';
 import 'package:glaze_flutter/features/lorebooks/embedding_settings_screen.dart';
 import 'package:glaze_flutter/features/settings/api_settings_screen.dart';
+import 'package:glaze_flutter/shared/widgets/glaze_spinner.dart';
 import 'package:glaze_flutter/features/personas/persona_list_screen.dart';
 import 'package:glaze_flutter/features/presets/preset_list_screen.dart';
 import 'package:glaze_flutter/features/card_rewrite/rewrite_review_screen.dart';
@@ -185,6 +186,45 @@ void main() {
         );
       });
     }
+  });
+
+  testWidgets('API settings puts its chrome up before building its tabs', (
+    tester,
+  ) async {
+    await pumpGlazeApp(tester, container: container);
+
+    Finder spinnerInScreen() => find.descendant(
+      of: find.byType(ApiSettingsScreen, skipOffstage: false).first,
+      matching: find.byType(GlazeSpinner, skipOffstage: false),
+      skipOffstage: false,
+    );
+
+    // Open it once and let it finish, so the lists it reads are cached. That
+    // is the case this is about: with the data already in hand, the first
+    // frame used to build all three tabs of grouped settings at once, and the
+    // screen appeared late because of it.
+    router().go('/tools/api');
+    await pumpNavigation(tester);
+    expect(spinnerInScreen(), findsNothing);
+
+    router().go('/tools');
+    await pumpNavigation(tester);
+
+    // Second open, one frame in. The data needs no loading now, so anything
+    // standing in for it is this screen holding its content back until it is
+    // on screen.
+    router().go('/tools/api');
+    await tester.pump();
+
+    expect(find.byType(ApiSettingsScreen, skipOffstage: false), findsWidgets);
+    expect(
+      spinnerInScreen(),
+      findsWidgets,
+      reason: 'the content must not be built in the frame that opens the route',
+    );
+
+    await pumpNavigation(tester);
+    expect(spinnerInScreen(), findsNothing);
   });
 
   testWidgets('Shell tabs are all reachable', (tester) async {
