@@ -1,25 +1,33 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/utils/id_generator.dart';
+import '../../../shared/theme/app_colors.dart';
 import '../../../shared/widgets/glaze_bottom_sheet.dart';
+import '../../../shared/widgets/glaze_switch.dart';
 import '../../../shared/widgets/glaze_toast.dart';
+import '../../../shared/widgets/list_controls.dart';
 import '../../../shared/widgets/menu_group.dart';
+import '../../../shared/widgets/preset_switcher.dart';
 import '../../../shared/widgets/sheet_view.dart';
 import '../models/block_config.dart';
 import '../models/extension_preset.dart';
+import '../providers/extension_preset_sort.dart';
 import '../providers/extension_presets_provider.dart';
 import '../providers/extensions_settings_provider.dart';
 import '../screens/preset_editor/sections/blocks_section.dart';
+import '../screens/preset_editor/sections/profiles_section.dart';
 import '../services/block_transfer_service.dart';
+import 'ext_blocks_permissions_sheet.dart';
 
-/// Ext Blocks control panel, opened from the magic drawer and from Tools.
+/// External Blocks control panel, opened from the magic drawer and from Tools.
 ///
-/// It is the quick surface: pick the preset, see its blocks, toggle one, and
-/// move blocks in or out as files. Anything that needs room — editing a block,
-/// permissions, connection profiles — lives in the preset editor, one tap away.
+/// The whole feature hangs off the switch in the header: with it off there is
+/// nothing to configure, so the body is a single line explaining that rather
+/// than a set of controls that do nothing. With it on the panel is the preset
+/// pill, the preset's API card and its blocks — tapping a block opens that
+/// block's settings, and managing the presets themselves lives behind the pill.
 class ExtBlocksSettingsSheet extends ConsumerWidget {
   const ExtBlocksSettingsSheet({super.key});
 
@@ -34,20 +42,31 @@ class ExtBlocksSettingsSheet extends ConsumerWidget {
         : null;
 
     return SheetView(
-      title: 'extblocks_sheet_title'.tr(),
-      actions: [
-        if (activePreset != null)
-          SheetViewAction(
-            icon: const Icon(Icons.file_upload_outlined, size: 20),
-            tooltip: 'extblocks_preset_export'.tr(),
-            onPressed: () => _exportPreset(context, activePreset),
+      // The master switch rides in the header rather than as the first row:
+      // it governs everything under it, so it should not look like a sibling
+      // of the settings it turns on.
+      titleWidget: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'extblocks_sheet_title'.tr(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: context.cs.onSurface,
+              ),
+            ),
           ),
-        SheetViewAction(
-          icon: const Icon(Icons.file_download_outlined, size: 20),
-          tooltip: 'extblocks_preset_import'.tr(),
-          onPressed: () => _importPreset(context, ref),
-        ),
-      ],
+          GlazeSwitch(
+            value: settings.enabled,
+            onChanged: (value) => ref
+                .read(extensionsSettingsProvider.notifier)
+                .update(settings.copyWith(enabled: value)),
+          ),
+        ],
+      ),
       // The header inset SheetView reports lives inside its own subtree,
       // so the padding must be read from a context below it — the outer
       // one puts the first row under the header strip.
@@ -60,59 +79,122 @@ class ExtBlocksSettingsSheet extends ConsumerWidget {
             MediaQuery.paddingOf(context).bottom + 24,
           ),
           children: [
-            MenuGroup(
-              header: 'extblocks_preset_section'.tr(),
-              description: 'extblocks_sheet_subtitle'.tr(),
-              items: [
-                MenuSwitchItem(
-                  label: 'extblocks_enabled'.tr(),
-                  description: 'extblocks_enabled_desc'.tr(),
-                  value: settings.enabled,
-                  onChanged: (value) => ref
-                      .read(extensionsSettingsProvider.notifier)
-                      .update(settings.copyWith(enabled: value)),
+            if (!settings.enabled)
+              _Hint(text: 'extblocks_disabled_hint'.tr())
+            else ...[
+              // The dropdown heads the list: it says which preset everything
+              // below belongs to. Permissions sit at the other end of the same
+              // row — they are the preset's, not a setting among the blocks.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Row(
+                  // spaceBetween rather than a Spacer: a Flexible next to a
+                  // Spacer would split the free space with the pill and leave
+                  // the chip short of the cards' right edge.
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: PresetPill(
+                        label:
+                            activePreset?.name ?? 'extblocks_preset_none'.tr(),
+                        onTap: () => _showPresetSwitcher(context, ref),
+                      ),
+                    ),
+                    if (activePreset != null) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: GlazeActionChip(
+                          icon: Icons.verified_user_outlined,
+                          label: 'extblocks_permissions'.tr(),
+                          tooltip: 'extblocks_permissions'.tr(),
+                          onTap: () => ExtBlocksPermissionsSheet.show(
+                            context,
+                            activePreset.id,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                MenuSelectorItem(
-                  label: 'extblocks_active_preset'.tr(),
-                  currentValue:
-                      activePreset?.name ?? 'extblocks_preset_none'.tr(),
-                  onTap: () => _pickPreset(context, ref, settings, presets),
-                ),
-                MenuItem(
-                  icon: Icons.add_circle_outline,
-                  label: 'extblocks_preset_create'.tr(),
-                  onTap: () => _createPreset(ref, presets),
-                ),
-                if (activePreset != null)
-                  MenuItem(
-                    icon: Icons.tune_outlined,
-                    label: 'extblocks_preset_edit'.tr(),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.push(
-                        '/extensions/preset-editor/${activePreset.id}',
-                      );
-                    },
-                  ),
-              ],
-            ),
-            if (activePreset == null)
-              _Hint(text: 'extblocks_no_preset_hint'.tr())
-            else
-              _BlocksGroup(
-                preset: activePreset,
-                onImport: () => _importBlocks(context, ref, activePreset),
               ),
+              if (activePreset == null)
+                _Hint(text: 'extblocks_no_preset_hint'.tr())
+              else ...[
+                ProfilesSection(preset: activePreset),
+                _BlocksGroup(
+                  preset: activePreset,
+                  onImport: () => _importBlocks(context, ref, activePreset),
+                ),
+              ],
+            ],
           ],
         ),
       ),
     );
   }
 
-  Future<void> _createPreset(
-    WidgetRef ref,
-    List<ExtensionPreset> presets,
-  ) async {
+  /// The preset list: rows pick, the header holds the sort control and the
+  /// list's own menu, and each preset carries its own menu.
+  void _showPresetSwitcher(BuildContext context, WidgetRef ref) {
+    PresetSwitcher.show(
+      context,
+      title: 'extblocks_preset_pick'.tr(),
+      sort: PresetSwitcherSort(
+        sort: extensionPresetSortProvider,
+        reorderArmed: extensionPresetReorderArmedProvider,
+      ),
+      menu: [
+        PresetSwitcherAction(
+          icon: Icons.add_circle_outline_rounded,
+          label: 'extblocks_preset_create'.tr(),
+          closesSwitcher: true,
+          onTap: () => _createPreset(ref),
+        ),
+        PresetSwitcherAction(
+          icon: Icons.file_download_outlined,
+          label: 'extblocks_preset_import'.tr(),
+          // Stays open: the imported preset appears in the list under it.
+          onTap: () => _importPreset(context, ref),
+        ),
+      ],
+      entriesBuilder: (sheetContext, sheetRef) {
+        final activeId = sheetRef
+            .watch(extensionsSettingsProvider)
+            .activePresetId;
+        return [
+          for (final preset in sheetRef.watch(extensionPresetsProvider))
+            PresetSwitcherEntry(
+              id: preset.id,
+              label: preset.name,
+              sublabel:
+                  '${'extblocks_blocks_section'.tr()}: ${preset.blocks.length}',
+              isActive: activeId == preset.id,
+              createdAt: preset.createdAt,
+              menu: [
+                PresetSwitcherAction(
+                  icon: Icons.file_upload_outlined,
+                  label: 'extblocks_preset_export'.tr(),
+                  onTap: () => _exportPreset(sheetContext, preset),
+                ),
+                PresetSwitcherAction(
+                  icon: Icons.delete_outline_rounded,
+                  label: 'extblocks_preset_delete'.tr(),
+                  isDestructive: true,
+                  onTap: () =>
+                      _confirmDeletePreset(sheetContext, sheetRef, preset),
+                ),
+              ],
+              onSelect: () => sheetRef
+                  .read(extensionsSettingsProvider.notifier)
+                  .selectPreset(preset.id),
+            ),
+        ];
+      },
+    );
+  }
+
+  Future<void> _createPreset(WidgetRef ref) async {
+    final presets = ref.read(extensionPresetsProvider);
     final preset = ExtensionPreset(
       id: generateId(),
       name: 'extblocks_preset_default_name'.tr(args: ['${presets.length + 1}']),
@@ -123,43 +205,49 @@ class ExtBlocksSettingsSheet extends ConsumerWidget {
     await ref.read(extensionsSettingsProvider.notifier).selectPreset(preset.id);
   }
 
-  void _pickPreset(
+  /// Deleting a preset takes its blocks with it, so it asks first.
+  void _confirmDeletePreset(
     BuildContext context,
     WidgetRef ref,
-    dynamic settings,
-    List<ExtensionPreset> presets,
+    ExtensionPreset preset,
   ) {
-    final activeId = settings.activePresetId as String?;
     GlazeBottomSheet.show<void>(
       context,
-      title: 'extblocks_preset_pick'.tr(),
+      title: 'extblocks_preset_delete'.tr(),
+      bigInfo: BottomSheetBigInfo(
+        icon: Icons.delete_outline_rounded,
+        description: 'extblocks_preset_delete_confirm'.tr(
+          args: [preset.name, '${preset.blocks.length}'],
+        ),
+      ),
       items: [
         BottomSheetItem(
-          label: 'extblocks_preset_none'.tr(),
-          icon: activeId == null
-              ? Icons.radio_button_checked
-              : Icons.radio_button_off,
+          label: 'action_delete'.tr(),
+          icon: Icons.delete_outline_rounded,
+          isDestructive: true,
           onTap: () {
             Navigator.pop(context);
-            ref.read(extensionsSettingsProvider.notifier).selectPreset(null);
+            _deletePreset(ref, preset);
           },
         ),
-        ...presets.map(
-          (preset) => BottomSheetItem(
-            label: preset.name,
-            icon: activeId == preset.id
-                ? Icons.radio_button_checked
-                : Icons.radio_button_off,
-            onTap: () {
-              Navigator.pop(context);
-              ref
-                  .read(extensionsSettingsProvider.notifier)
-                  .selectPreset(preset.id);
-            },
-          ),
+        BottomSheetItem(
+          label: 'btn_cancel'.tr(),
+          onTap: () => Navigator.pop(context),
         ),
       ],
     );
+  }
+
+  Future<void> _deletePreset(WidgetRef ref, ExtensionPreset preset) async {
+    final wasActive =
+        ref.read(extensionsSettingsProvider).activePresetId == preset.id;
+    await ref.read(extensionPresetsProvider.notifier).delete(preset.id);
+    if (!wasActive) return;
+    // The panel would otherwise keep showing a preset that no longer exists.
+    final remaining = ref.read(extensionPresetsProvider);
+    await ref
+        .read(extensionsSettingsProvider.notifier)
+        .selectPreset(remaining.isEmpty ? null : remaining.first.id);
   }
 
   Future<void> _importPreset(BuildContext context, WidgetRef ref) async {
@@ -227,10 +315,8 @@ class ExtBlocksSettingsSheet extends ConsumerWidget {
   }
 }
 
-/// The active preset's blocks, read-only apart from the enable toggle.
-///
-/// Editing opens the preset editor rather than a second editor here, so there
-/// is one place where a block's settings live.
+/// The active preset's blocks. Tapping one opens its settings; the overflow
+/// menu holds the file and lifecycle actions.
 class _BlocksGroup extends ConsumerWidget {
   const _BlocksGroup({required this.preset, required this.onImport});
 
@@ -256,10 +342,7 @@ class _BlocksGroup extends ConsumerWidget {
               subtitle: _subtitle(block),
               enabled: block.enabled,
               onToggle: (value) => _toggle(ref, block, value),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/extensions/preset-editor/${preset.id}');
-              },
+              onTap: () => editBlockSheet(context, ref, preset, block),
               onMore: () => _showActions(context, ref, block),
             ),
         MenuItem(
