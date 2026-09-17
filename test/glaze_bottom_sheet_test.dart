@@ -24,6 +24,44 @@ void main() {
     );
   }
 
+  testWidgets('the sheet is solid, not glass', (tester) async {
+    await tester.pumpWidget(
+      testApp(() {}),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => GlazeBottomSheet.show<void>(
+                  context,
+                  title: 'Sheet',
+                  items: [
+                    BottomSheetItem(label: 'one', onTap: () {}),
+                    BottomSheetItem(label: 'two', onTap: () {}),
+                  ],
+                ),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('one'), findsOneWidget);
+    // The shell composites its tint against the surface colour instead of
+    // blurring the dimmed screen behind it, and everything it contains
+    // inherits that, so nothing in the sheet paints a backdrop pass. The
+    // header strip keeps its own blur — that one is over the sheet's own
+    // scrolling content, not over what is behind the sheet.
+    expect(find.byType(BackdropFilter), findsNothing);
+  });
+
   testWidgets('lazy items only build rows in the viewport', (tester) async {
     var buildCount = 0;
 
