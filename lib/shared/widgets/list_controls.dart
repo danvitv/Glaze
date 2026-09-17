@@ -167,6 +167,73 @@ class GlazeSortIconChip extends StatelessWidget {
   }
 }
 
+/// Glass button for a single action next to a chip — the permissions shield
+/// beside the External Blocks preset pill, for one.
+///
+/// Same 32pt glass as [GlazeDropdownChip] and [GlazeReorderToggleButton], with
+/// no state to show and no chevron: it acts rather than opens a choice. Give it
+/// a [label] unless the icon is unmistakable on its own.
+class GlazeActionChip extends StatelessWidget {
+  final IconData icon;
+  final String? label;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const GlazeActionChip({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          height: 32,
+          child: GlassSurface(
+            borderRadius: BorderRadius.circular(16),
+            tint: context.cs.surface,
+            border: Border.all(
+              color: context.cs.primary.withValues(alpha: 0.18),
+            ),
+            child: Padding(
+              // A bare icon keeps the circle; a labelled one gets room for the
+              // text without crowding the glyph.
+              padding: EdgeInsets.symmetric(horizontal: label == null ? 7 : 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 18, color: context.cs.primary),
+                  if (label != null) ...[
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        label!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: context.cs.primary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Glass toggle that arms dragging for a manually ordered list, shown next to
 /// the sort chip while that mode is picked.
 ///
@@ -256,7 +323,10 @@ class GlazeFilterIconButton extends StatelessWidget {
                 top: -2,
                 right: -2,
                 child: Container(
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   decoration: BoxDecoration(
                     color: context.cs.primary,

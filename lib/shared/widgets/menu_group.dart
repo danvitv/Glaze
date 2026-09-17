@@ -5,6 +5,7 @@ import '../theme/app_colors.dart';
 import '../shell/shell_header_provider.dart';
 import 'glass_surface.dart';
 import 'help_tip.dart';
+import 'glaze_switch.dart';
 
 enum MenuGroupHeaderVariant { standard, accentCaps }
 
@@ -525,21 +526,9 @@ class MenuSwitchItem extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 16),
-            Switch(
+            GlazeSwitch(
               value: value,
-              onChanged: included ?? true
-                  ? (v) {
-                      Haptics.selectionClick();
-                      onChanged(v);
-                    }
-                  : null,
-              activeThumbColor: context.cs.primary,
-              activeTrackColor: context.cs.primary.withValues(alpha: 0.5),
-              trackOutlineColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? Colors.transparent
-                    : context.cs.outlineVariant,
-              ),
+              onChanged: included ?? true ? onChanged : null,
             ),
           ],
         ),
@@ -647,7 +636,7 @@ class MenuFieldItem extends StatelessWidget {
                 color: context.cs.onSurfaceVariant.withValues(alpha: 0.4),
               ),
               filled: true,
-              fillColor: const Color(0xFF252525),
+              fillColor: context.inputFill,
               suffixIcon: suffix,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -909,7 +898,7 @@ class _MenuRangeItemState extends State<MenuRangeItem> {
           ),
           decoration: InputDecoration(
             filled: true,
-            fillColor: const Color(0xFF252525),
+            fillColor: context.inputFill,
             contentPadding: const EdgeInsets.symmetric(horizontal: 8),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
@@ -1163,7 +1152,7 @@ class MenuSelectorItem extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               constraints: const BoxConstraints(minHeight: 48),
               decoration: BoxDecoration(
-                color: const Color(0xFF252525),
+                color: context.inputFill,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: context.cs.outlineVariant),
               ),

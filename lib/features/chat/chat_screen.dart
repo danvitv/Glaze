@@ -61,6 +61,7 @@ import 'state/lorebook_coverage_provider.dart';
 import 'state/memory_activity_provider.dart';
 import 'state/studio_history_rotation_provider.dart';
 import 'bridge/chat_overlay_blur_region.dart';
+import 'bridge/chat_webview_blur_mode.dart';
 import 'widgets/chat_blur_region_tracker.dart';
 import 'widgets/chat_background.dart';
 import 'widgets/chat_header.dart';
@@ -142,6 +143,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isHeaderHidden = false;
   late final ChatDrawerController _drawerCtrl;
   late final ChatSearchDelegate _search;
+
+  /// True where a Flutter `BackdropFilter` can sample the chat WebView, so the
+  /// chrome blurs it itself instead of having the blur mirrored into the page
+  /// as CSS strips. See [chatWebViewBlurIsFlutterSide].
+  final bool _blurIsFlutterSide = chatWebViewBlurIsFlutterSide();
+
+  /// One backdrop capture for every glass surface that floats over the chat
+  /// body — the header pill at the top, the composer pill and its circle
+  /// buttons at the bottom. They never overlap and nothing is painted over one
+  /// of them in between, so the engine can blur once for all of them instead of
+  /// once per surface (see [GlassSurface.backdropKey]). Created once: a fresh
+  /// key per build would be a fresh capture per frame.
+  final BackdropKey _chromeBackdropKey = BackdropKey();
 
   /// Guards against queueing one post-frame recount per rebuild while a
   /// search is open.
@@ -392,10 +406,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             !(bodyPaintsBgImage && _everBuiltBody && !chatStateAsync.hasError),
         extendBodyBehindHeader: true,
         resizeToAvoidBottomInset: false,
-        // The body is a full-screen chat WebView; the header's glass blur is
-        // reproduced by an in-WebView CSS strip (mirrored via the 'header'
-        // blur region in _measureBlurRegions), so drop the Flutter blur pass.
-        headerBlurViaWebView: true,
+        // The body is a full-screen chat WebView. Where Flutter can sample it
+        // the header blurs it like any other content, sharing one capture with
+        // the composer chrome at the other edge; where it cannot, the header
+        // drops its blur pass and an in-WebView CSS strip reproduces it
+        // (mirrored via the 'header' region in _measureBlurRegions).
+        headerBlurViaWebView: !_blurIsFlutterSide,
+        headerBackdropKey: _blurIsFlutterSide ? _chromeBackdropKey : null,
         // Desktop paints a tab's header edge to edge (see the shell's
         // _DesktopHeader); chat matches it instead of floating a pill.
         flushHeader: isDesktopLayout(context),
@@ -552,6 +569,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     enterToSend: enterToSend,
                     targetMessageId: widget.targetMessageId,
                     isHeaderHidden: _isHeaderHidden,
+                    blurIsFlutterSide: _blurIsFlutterSide,
+                    chromeBackdropKey: _chromeBackdropKey,
                   ),
                   if (awaitingTargetSession)
                     const Positioned.fill(
@@ -677,6 +696,15 @@ class _ChatBody extends ConsumerStatefulWidget {
   /// WebView blur region is dropped while the header is slid away.
   final bool isHeaderHidden;
 
+  /// True where the chrome blurs the WebView with its own `BackdropFilter`;
+  /// false where that blur has to be mirrored into the page as CSS strips.
+  final bool blurIsFlutterSide;
+
+  /// The backdrop capture the floating chrome shares — see
+  /// [_ChatScreenState._chromeBackdropKey]. Unused while the blur is mirrored,
+  /// since nothing here draws one then.
+  final BackdropKey chromeBackdropKey;
+
   const _ChatBody({
     required this.charId,
     required this.state,
@@ -688,6 +716,8 @@ class _ChatBody extends ConsumerStatefulWidget {
     this.enterToSend = true,
     this.targetMessageId,
     this.isHeaderHidden = false,
+    required this.blurIsFlutterSide,
+    required this.chromeBackdropKey,
   });
 
   @override
@@ -752,6 +782,11 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
   /// header rect below is measured post-frame, where reading an inherited
   /// widget would register a dependency outside the build phase.
   bool _blurFlushHeader = false;
+
+  /// Whether the page should be holding strips at all, captured in build for
+  /// the same reason: the post-frame pass must not read providers. Mirrors the
+  /// gate the WebView's `blurRegions` property applies.
+  bool _blurMirrorEnabled = false;
 
   /// Keyboard-inset settle tracking for the WebView-bound bottom inset.
   /// While the keyboard animates, the WebView receives the predicted end
@@ -1204,6 +1239,8 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
   /// every build (keyboard/drawer animations move the input bar each frame)
   /// and on registry changes.
   void _scheduleBlurMeasure() {
+    // Nothing to mirror where the chrome blurs the WebView itself.
+    if (widget.blurIsFlutterSide) return;
     if (_blurMeasureScheduled) return;
     _blurMeasureScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1213,14 +1250,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
   }
 
   void _measureBlurRegions() {
-    if (!mounted) return;
-    // Transient layout: while the keyboard or drawer animates, the overlays
-    // move every frame — re-measuring would push per-frame region updates
-    // over the JS bridge and repaint the Flutter blur sandwich each frame.
-    // A build is guaranteed at settle (the keyboard settle-timer setState,
-    // the drawer animation's final tick with isAnimating == false), and it
-    // re-schedules this measure, so the final rects always land.
-    if (!_keyboardSettled || widget.drawerCtrl.isDrawerAnimating) return;
+    if (!mounted || widget.blurIsFlutterSide) return;
     final box = _webViewStateKey.currentContext?.findRenderObject();
     if (box is! RenderBox || !box.attached || !box.hasSize) return;
     final origin = box.localToGlobal(Offset.zero);
@@ -1255,9 +1285,25 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
       ..._blurRegistry.measure(box),
     ];
     regions.sort((a, b) => a.id.compareTo(b.id));
-    if (!listEquals(regions, _blurRegions)) {
-      setState(() => _blurRegions = regions);
-    }
+    if (listEquals(regions, _blurRegions)) return;
+    _blurRegions = regions;
+    // Deliberately not setState: the overlays move every frame of a keyboard,
+    // drawer or composer-growth animation, and rebuilding this subtree to
+    // carry the rects down as a widget property was what made a per-frame
+    // update too expensive to do — which is why the pass used to hold still
+    // until the layout settled, leaving the strips parked where the chrome had
+    // been for the whole animation. Pushed straight at the page instead, the
+    // frame costs one small bridge call and no rebuild, so the strips can
+    // follow. The property below still carries the same list for the paths
+    // that re-assert state (first paint after the page is ready, session
+    // switch); the page no-ops on geometry it already has.
+    unawaited(_pushBlurRegions());
+  }
+
+  /// Hands the measured rects to the page without going through a rebuild.
+  Future<void> _pushBlurRegions() async {
+    if (!_blurMirrorEnabled) return;
+    await _webViewStateKey.currentState?.applyBlurRegions(_blurRegions);
   }
 
   @override
@@ -1401,6 +1447,8 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
     final messageListTop = MediaQuery.paddingOf(context).top + 10 + 56;
     _blurSafeTop = MediaQuery.paddingOf(context).top;
     _blurFlushHeader = isDesktopLayout(context);
+    _blurMirrorEnabled =
+        !widget.blurIsFlutterSide && !batterySaver && preset.elementBlur > 0;
 
     final bgBlur = preset.bgBlur > 0 ? preset.bgBlur : 0.0;
     final fontStyle = batteryAware(
@@ -1617,9 +1665,9 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
                         bottomInset: webViewBottomInset,
                         viewportHeight: _webViewBoxHeight,
                         topInset: effectiveTopInset,
-                        blurRegions: (batterySaver || preset.elementBlur <= 0)
-                            ? const <ChatOverlayBlurRegion>[]
-                            : _blurRegions,
+                        blurRegions: _blurMirrorEnabled
+                            ? _blurRegions
+                            : const <ChatOverlayBlurRegion>[],
                         charName: character?.name,
                         charColor: character?.color,
                         personaName: effectivePersona?.name,
@@ -2223,6 +2271,8 @@ class _ChatBodyState extends ConsumerState<_ChatBody>
                                         );
                                     return ChatInputBar(
                                       key: ValueKey(widget.state.session?.id),
+                                      blurViaWebView: !widget.blurIsFlutterSide,
+                                      backdropKey: widget.chromeBackdropKey,
                                       focusNode: widget.drawerCtrl.inputFocus,
                                       initialDraft:
                                           widget.state.session?.draft ?? '',

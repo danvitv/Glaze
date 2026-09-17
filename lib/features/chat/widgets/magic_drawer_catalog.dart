@@ -22,7 +22,7 @@ List<MagicDrawerItemDef> buildMagicDrawerItems() => [
   ),
   MagicDrawerItemDef(
     id: 'memory',
-    label: 'Memory',
+    label: 'memory_sheet_title'.tr(),
     icon: Icons.subject,
     category: MagicDrawerCategory.session,
   ),
@@ -88,7 +88,7 @@ List<MagicDrawerItemDef> buildMagicDrawerItems() => [
   ),
   MagicDrawerItemDef(
     id: 'ext-blocks',
-    label: 'Ext Blocks',
+    label: 'ext_blocks_title'.tr(),
     icon: Icons.extension_outlined,
     category: MagicDrawerCategory.config,
   ),
@@ -96,12 +96,6 @@ List<MagicDrawerItemDef> buildMagicDrawerItems() => [
     id: 'agent-ops',
     label: 'agent_ops_title'.tr(),
     icon: Icons.smart_toy_outlined,
-    category: MagicDrawerCategory.tools,
-  ),
-  MagicDrawerItemDef(
-    id: 'card-rewriter',
-    label: 'magic_card_rewriter'.tr(),
-    icon: Icons.auto_fix_high_outlined,
     category: MagicDrawerCategory.tools,
   ),
 ];

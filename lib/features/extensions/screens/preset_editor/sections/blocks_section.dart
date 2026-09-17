@@ -97,7 +97,7 @@ class BlocksSection extends ConsumerWidget {
     );
     final updated = preset.copyWith(blocks: [...preset.blocks, block]);
     await ref.read(extensionPresetsProvider.notifier).update(updated);
-    if (context.mounted) _editBlock(context, ref, updated, block);
+    if (context.mounted) editBlockSheet(context, ref, updated, block);
   }
 }
 
@@ -122,7 +122,7 @@ class _BlockTile extends ConsumerWidget {
           subtitle: blockSubtitle(block),
           enabled: block.enabled,
           onToggle: (v) => _toggleBlock(ref, preset, block, v),
-          onTap: () => _editBlock(context, ref, preset, block),
+          onTap: () => editBlockSheet(context, ref, preset, block),
           onMore: () => _showBlockActions(context, ref, preset, block),
         ),
         Positioned(
@@ -200,16 +200,40 @@ String blockSubtitle(BlockConfig block) {
     BlockType.imageGen => 'block_type_image'.tr(),
     BlockType.jsRunner => 'block_type_js'.tr(),
     BlockType.interactive => 'block_type_interactive'.tr(),
+    BlockType.rewrite => 'block_type_rewrite'.tr(),
+    BlockType.accumulation => 'block_type_accumulation'.tr(),
   };
-  final trigger = switch (block.trigger) {
-    BlockTrigger.afterUser => 'block_trigger_after_user'.tr(),
-    BlockTrigger.afterAssistant => 'block_trigger_after_assistant'.tr(),
-    BlockTrigger.periodic => 'block_trigger_periodic'.tr(),
-  };
-  return '$type • $trigger';
+  return '$type • ${blockTriggerSummary(block)}';
 }
 
-void _editBlock(
+/// Human-readable trigger line for a block.
+///
+/// A block can answer to both sides at once, so the two flags are reported
+/// together rather than collapsed into [BlockConfig.trigger] — a block that
+/// runs after every message would otherwise read as running after only one.
+String blockTriggerSummary(BlockConfig block) {
+  if (block.trigger == BlockTrigger.periodic) {
+    return 'block_trigger_periodic'.tr();
+  }
+
+  final sides = [
+    if (block.triggerOnUser) 'block_trigger_after_user'.tr(),
+    if (block.triggerOnChar) 'block_trigger_after_assistant'.tr(),
+  ];
+
+  if (sides.isEmpty) {
+    return block.trigger == BlockTrigger.afterUser
+        ? 'block_trigger_after_user'.tr()
+        : 'block_trigger_after_assistant'.tr();
+  }
+
+  return sides.join(' + ');
+}
+
+/// Opens one block's settings as a sheet and writes the result back into
+/// [preset]. Shared with the External Blocks panel, so tapping a block goes straight
+/// to its settings wherever the list is shown.
+void editBlockSheet(
   BuildContext context,
   WidgetRef ref,
   ExtensionPreset preset,
