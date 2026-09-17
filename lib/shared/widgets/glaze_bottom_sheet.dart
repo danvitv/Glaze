@@ -335,16 +335,24 @@ class GlazeBottomSheetFrame extends ConsumerWidget {
         maxHeight ?? MediaQuery.of(context).size.height * maxHeightFactor;
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: cap),
-      child: GlassSurface(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: context.cs.outlineVariant)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (showHandle) _HandleBar(),
-            Flexible(fit: FlexFit.loose, child: child),
-          ],
+      // Solid, not glass. The sheet's tint is composited against the surface
+      // colour once instead of blending over — and blurring — the dimmed
+      // screen behind it on every frame. See [FlatBackdrop]; everything the
+      // sheet contains inherits the resolved fill from here, so its own cards
+      // stop blurring too.
+      child: FlatBackdrop(
+        color: context.cs.surface,
+        child: GlassSurface(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(top: BorderSide(color: context.cs.outlineVariant)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (showHandle) _HandleBar(),
+              Flexible(fit: FlexFit.loose, child: child),
+            ],
+          ),
         ),
       ),
     );
@@ -580,145 +588,153 @@ class _GlazeBottomSheetContentState
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.95,
       ),
-      child: GlassSurface(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: context.cs.outlineVariant)),
-        child: Stack(
-          children: [
-            TopEdgeBlur(
-              enabled: !batterySaver,
-              height: _headerH + 8,
-              sigma: 24,
-              tintColor: context.cs.surface.withValues(alpha: 0.88),
-              child: Padding(
-                // Only the header is reserved as an *outer* inset. The
-                // nav-bar/keyboard inset goes *inside* the scroll view as
-                // content padding (below), so the viewport still reaches the
-                // sheet's bottom edge: list rows stay visible scrolling behind
-                // the nav bar, while the last row (e.g. Cancel/Save) rests
-                // above it. Reserving it out here instead would shrink the
-                // viewport and leave a dead strip no content can scroll into.
-                padding: EdgeInsets.only(top: _headerH),
-                child: RawScrollbar(
-                  controller: _scrollController,
-                  thumbColor: Colors.white.withValues(alpha: 0.15),
-                  radius: const Radius.circular(3),
-                  thickness: 4,
-                  padding: const EdgeInsets.only(right: 3),
-                  child: ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(
-                      context,
-                    ).copyWith(scrollbars: false),
-                    child: widget.itemBuilder != null
-                        ? _buildLazyList(
-                            context,
-                            EdgeInsets.only(
-                              bottom: bottomInset + safeBottom + 16,
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            controller: _scrollController,
-                            padding: EdgeInsets.only(
-                              bottom: bottomInset + safeBottom + 16,
-                            ),
-                            // Isolates the sheet content in its own layer so a
-                            // scroll only shifts the layer instead of re-recording
-                            // every row each frame.
-                            child: RepaintBoundary(
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  minHeight: _stableBodyH ?? 0,
-                                ),
-                                child: Column(
-                                  key: _bodyKey,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SizedBox(height: 4),
-                                    if (widget.child != null) widget.child!,
-                                    if (widget.bigInfo != null)
-                                      _BigInfo(info: widget.bigInfo!),
-                                    if (widget.items != null &&
-                                        widget.items!.isNotEmpty)
-                                      _ItemsList(
-                                        items: widget.items!,
-                                        visible: itemsVisible,
-                                        animateFilter: animateFilter,
-                                        scrollToIndex: widget.scrollToIndex,
-                                        scrollTargetKey: _scrollTargetKey,
-                                      ),
-                                    if (widget.itemsAsCards != null &&
-                                        widget.itemsAsCards!.isNotEmpty)
-                                      _ItemsCardList(
-                                        items: widget.itemsAsCards!,
-                                        visible: cardsVisible,
-                                        animateFilter: animateFilter,
-                                      ),
-                                    if (widget.sessionItems != null &&
-                                        widget.sessionItems!.isNotEmpty)
-                                      GlazeSessionList(
-                                        items: widget.sessionItems!,
-                                        visible: sessionsVisible,
-                                        animateFilter: animateFilter,
-                                      ),
-                                    if (cardItems != null &&
-                                        cardItems.isNotEmpty)
-                                      _CardList(
-                                        items: cardItems,
-                                        visible: cardItemsVisible,
-                                        animateFilter: animateFilter,
-                                        onReorder: cards?.onReorder,
-                                      ),
-                                    if (widget.searchable)
-                                      _SheetReveal(
-                                        visible: noResults,
-                                        animate: animateFilter,
-                                        child: const _SearchEmptyState(),
-                                      ),
-                                    if (widget.input != null)
-                                      _InputSection(
-                                        input: widget.input!,
-                                        controller: _inputController,
-                                        focusNode: _inputFocus,
-                                      ),
-                                  ],
+      // Solid, as [GlazeBottomSheetFrame] is: the fill is resolved against the
+      // surface colour instead of blending over the dimmed screen every frame.
+      child: FlatBackdrop(
+        color: context.cs.surface,
+        child: GlassSurface(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border(top: BorderSide(color: context.cs.outlineVariant)),
+          child: Stack(
+            children: [
+              TopEdgeBlur(
+                enabled: !batterySaver,
+                height: _headerH + 8,
+                sigma: 24,
+                tintColor: context.cs.surface.withValues(alpha: 0.88),
+                child: Padding(
+                  // Only the header is reserved as an *outer* inset. The
+                  // nav-bar/keyboard inset goes *inside* the scroll view as
+                  // content padding (below), so the viewport still reaches the
+                  // sheet's bottom edge: list rows stay visible scrolling behind
+                  // the nav bar, while the last row (e.g. Cancel/Save) rests
+                  // above it. Reserving it out here instead would shrink the
+                  // viewport and leave a dead strip no content can scroll into.
+                  padding: EdgeInsets.only(top: _headerH),
+                  child: RawScrollbar(
+                    controller: _scrollController,
+                    thumbColor: Colors.white.withValues(alpha: 0.15),
+                    radius: const Radius.circular(3),
+                    thickness: 4,
+                    padding: const EdgeInsets.only(right: 3),
+                    child: ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(
+                        context,
+                      ).copyWith(scrollbars: false),
+                      child: widget.itemBuilder != null
+                          ? _buildLazyList(
+                              context,
+                              EdgeInsets.only(
+                                bottom: bottomInset + safeBottom + 16,
+                              ),
+                            )
+                          : SingleChildScrollView(
+                              controller: _scrollController,
+                              padding: EdgeInsets.only(
+                                bottom: bottomInset + safeBottom + 16,
+                              ),
+                              // Isolates the sheet content in its own layer so a
+                              // scroll only shifts the layer instead of re-recording
+                              // every row each frame.
+                              child: RepaintBoundary(
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minHeight: _stableBodyH ?? 0,
+                                  ),
+                                  child: Column(
+                                    key: _bodyKey,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      if (widget.child != null) widget.child!,
+                                      if (widget.bigInfo != null)
+                                        _BigInfo(info: widget.bigInfo!),
+                                      if (widget.items != null &&
+                                          widget.items!.isNotEmpty)
+                                        _ItemsList(
+                                          items: widget.items!,
+                                          visible: itemsVisible,
+                                          animateFilter: animateFilter,
+                                          scrollToIndex: widget.scrollToIndex,
+                                          scrollTargetKey: _scrollTargetKey,
+                                        ),
+                                      if (widget.itemsAsCards != null &&
+                                          widget.itemsAsCards!.isNotEmpty)
+                                        _ItemsCardList(
+                                          items: widget.itemsAsCards!,
+                                          visible: cardsVisible,
+                                          animateFilter: animateFilter,
+                                        ),
+                                      if (widget.sessionItems != null &&
+                                          widget.sessionItems!.isNotEmpty)
+                                        GlazeSessionList(
+                                          items: widget.sessionItems!,
+                                          visible: sessionsVisible,
+                                          animateFilter: animateFilter,
+                                        ),
+                                      if (cardItems != null &&
+                                          cardItems.isNotEmpty)
+                                        _CardList(
+                                          items: cardItems,
+                                          visible: cardItemsVisible,
+                                          animateFilter: animateFilter,
+                                          onReorder: cards?.onReorder,
+                                        ),
+                                      if (widget.searchable)
+                                        _SheetReveal(
+                                          visible: noResults,
+                                          animate: animateFilter,
+                                          child: const _SearchEmptyState(),
+                                        ),
+                                      if (widget.input != null)
+                                        _InputSection(
+                                          input: widget.input!,
+                                          controller: _inputController,
+                                          focusNode: _inputFocus,
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
               ),
-            ),
 
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: KeyedSubtree(
-                key: _headerKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _HandleBar(),
-                    if (_hasHeader)
-                      _Header(title: widget.title, action: widget.headerAction),
-                    if (widget.searchable)
-                      _SheetSearchField(
-                        controller: _searchController,
-                        focusNode: _searchFocus,
-                        hint: widget.searchHint,
-                        autofocus: widget.autofocusSearch,
-                        hasQuery: _searchController.text.isNotEmpty,
-                        onChanged: _onSearchChanged,
-                        onClear: _clearSearch,
-                      ),
-                  ],
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: KeyedSubtree(
+                  key: _headerKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _HandleBar(),
+                      if (_hasHeader)
+                        _Header(
+                          title: widget.title,
+                          action: widget.headerAction,
+                        ),
+                      if (widget.searchable)
+                        _SheetSearchField(
+                          controller: _searchController,
+                          focusNode: _searchFocus,
+                          hint: widget.searchHint,
+                          autofocus: widget.autofocusSearch,
+                          hasQuery: _searchController.text.isNotEmpty,
+                          onChanged: _onSearchChanged,
+                          onClear: _clearSearch,
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
