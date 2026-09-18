@@ -519,19 +519,24 @@ export class Bridge {
     return Math.min(shrink, this._bottomInsetPx);
   }
 
-  // The height the reader can actually see, in CSS px.
+  // The height of the scrollport, in CSS px.
   //
-  // Two different things can shrink when the keyboard comes up and the
-  // element only knows about one of them: the *layout* viewport (which sizes
-  // this element, and which an overlaying keyboard leaves alone - that is what
-  // `100dvh` fixes) and the *visual* viewport (which an overlaying keyboard
-  // always shrinks). Whichever is smaller is what is left on screen. Zooming
-  // would also shrink the visual viewport, but the page is pinned at
-  // `initial-scale=1, user-scalable=no`.
+  // Deliberately the container's own layout height and not the visual
+  // viewport, even though an overlaying keyboard shrinks the latter and not
+  // the former. What the padding above buys is SCROLL RANGE: room to push the
+  // end of the list out from under the chrome. Only a scrollport that actually
+  // got shorter needs less of it, and an overlaying keyboard does not shorten
+  // this one — it covers it.
+  //
+  // Measuring the visual viewport here subtracted the keyboard's height from
+  // the padding while the scroll range it was standing in for never appeared,
+  // so the bottom of the list became unreachable: at maximum scroll the last
+  // lines sat behind the keyboard with nothing left to scroll. Where the
+  // embedder really does resize the WebView, the container's own height falls
+  // with it and the shrink is still seen, which is the case this subtraction
+  // exists for.
   _visibleViewportH() {
-    const client = this.virtualList.container.clientHeight;
-    const visual = window.visualViewport ? window.visualViewport.height : 0;
-    return visual > 0 ? Math.min(client, visual) : client;
+    return this.virtualList.container.clientHeight;
   }
 
   /* ---------- Interaction dispatch ---------- */
@@ -1467,40 +1472,22 @@ export class Bridge {
   }
 
   /* ---------- Inline edit (toggle into .msg-body) ---------- */
+  /* Entering edit mode does not move the chat. The controller restores the
+   * scroll position it took before swapping the body for the textarea, and
+   * nothing else here touches it: a message tapped for editing is a message the
+   * reader is already looking at, and the jump this used to make — a smooth
+   * scroll putting the message's top under the header — took the rest of the
+   * chat with it and dragged the header and the context card through their own
+   * scroll reactions on the way.
+   *
+   * The caret is still kept in view, but by the browser rather than by us: it
+   * reveals the caret on focus and as the text grows, and `scroll-padding`
+   * on the container is what keeps that reveal clear of the chrome (see
+   * _applyBottomPadding). That only ever scrolls as far as the caret needs. */
   startEdit(messageId) {
     this._editController.startEdit(messageId, (pos) => {
       if (pos !== undefined) this.virtualList.container.scrollTop = pos;
       return this.virtualList.container.scrollTop;
-    });
-    // After the textarea/footer have been swapped in (and the prior scroll
-    // position restored by the controller), smoothly bring the top of the
-    // edited message into view so the user starts editing from its beginning.
-    this._scrollMessageToTop(messageId);
-  }
-
-  // Smoothly scroll so the top of [messageId] lands just below the translucent
-  // header. The container carries a dynamic `padding-top` (header inset, see
-  // setTopPadding), so we subtract it to avoid the message hiding behind it.
-  _scrollMessageToTop(messageId) {
-    const container = this.virtualList?.container;
-    if (!container) return;
-    requestAnimationFrame(() => {
-      const section = document.querySelector(`[data-message-id="${messageId}"]`);
-      if (!section || !container.isConnected) return;
-      const cRect = container.getBoundingClientRect();
-      const sRect = section.getBoundingClientRect();
-      const padTop = parseFloat(getComputedStyle(container).paddingTop) || 0;
-      const target = container.scrollTop + (sRect.top - cRect.top) - padTop - 8;
-      this.virtualList.isProgrammaticScrolling = true;
-      container.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
-      setTimeout(() => {
-        this.virtualList.isProgrammaticScrolling = false;
-        // Re-sync the render window to the resting scroll position (scroll
-        // events fired during the animation were gated out above).
-        if (typeof this.virtualList.updateWindow === 'function') {
-          this.virtualList.updateWindow();
-        }
-      }, 500);
     });
   }
 
