@@ -335,6 +335,17 @@ aborted.
 additionally requires `session.messages.last` to be a non-error assistant /
 character message. A user message must never trigger it.
 
+### INV-S5: A summary run is given the summary it replaces ✅ ENFORCED
+
+`SummaryService.generateSummary` reads the stored summary before it writes the
+new one and passes it to `buildSummaryPrompt`, which places it at
+`{{previous_summary}}` or, when the template does not, under
+`summaryPreviousHeader` between the instructions and the transcript. A run must
+never re-derive the chat from the transcript alone — that silently drops
+whatever the previous summary had distilled out of messages the model now
+weighs differently. The first run of a session adds nothing. Covered by
+`test/summary_service_test.dart`.
+
 ### INV-S3: Summary does not mutate chat messages
 
 Summary generation only reads history and writes to `ChatSummary` via `SummaryRepo`.
@@ -363,6 +374,21 @@ the other.
 
 This contract is exercised in `test/memory_chat_concurrency_test.dart` with
 distinct marker responses and reversed completion order.
+
+### INV-M3a: A memory draft generation outlives the sheet that started it ✅ ENFORCED
+
+The request, its cancel token, its session lease and its persistence belong to
+`memoryDraftJobsProvider`, not to the memory sheet. Closing the sheet mid-request
+must not cancel it, must not lose its result, and must not leak the lease; the
+result is written with `MemoryBookRepo.mutateDraft`, and reopening the sheet
+shows the same job with the same start time. Nothing in this path may reach for
+a `WidgetRef` after the await — a ref whose widget is gone throws instead of
+persisting, which is how finished drafts used to be discarded.
+
+Whoever writes a memory book from outside the sheet bumps
+`memoryBookRevisionProvider` afterwards, so an open sheet re-reads rather than
+saving its own stale copy back over the write. Covered by
+`test/memory_draft_jobs_test.dart`.
 
 ### INV-M4: Memory draft ownership remains exclusive ✅ ENFORCED
 
