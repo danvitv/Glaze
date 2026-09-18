@@ -7,6 +7,7 @@ import 'package:glaze_flutter/core/models/preset.dart';
 import 'package:glaze_flutter/core/state/active_regex_provider.dart';
 import 'package:glaze_flutter/core/state/db_provider.dart';
 import 'package:glaze_flutter/core/state/global_regex_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// The global scripts behind a load that has not finished yet — which is every
 /// cold start, where they come out of SharedPreferences while the chat is
@@ -49,10 +50,13 @@ const _presetPromptOnly = PresetRegex(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late AppDatabase db;
   late ProviderContainer container;
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     db = AppDatabase.forTesting(NativeDatabase.memory());
     await PresetRepo(db).put(
       const Preset(
