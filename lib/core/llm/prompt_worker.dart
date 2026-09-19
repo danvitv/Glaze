@@ -5,12 +5,11 @@ import 'dart:isolate';
 import '../utils/platform_paths.dart';
 
 import '../models/chat_message.dart';
+import '../models/memory_entry_revisions.dart';
 import '../utils/cast_helpers.dart';
 import 'glaze_matcher.dart';
 import 'memory_budget.dart';
 import 'memory_retrieval_mode.dart';
-import 'memory_excerpt_selector.dart';
-import 'memory_formatting.dart';
 import 'memory_selector.dart';
 import 'prompt_builder.dart';
 import 'prompt_inputs.dart';
@@ -56,8 +55,7 @@ Duration timeoutForPayload(int payloadBytes, {Duration? base, Duration? cap}) {
   final ceiling = cap ?? PromptWorker.maxRequestTimeout;
   if (ceiling <= floor) return floor;
   final megabytes = payloadBytes / (1024 * 1024);
-  final scaled =
-      floor + Duration(milliseconds: (megabytes * 15000).round());
+  final scaled = floor + Duration(milliseconds: (megabytes * 15000).round());
   return scaled > ceiling ? ceiling : scaled;
 }
 
@@ -412,6 +410,13 @@ PromptResult _buildFromInputs(PromptInputs inputs) {
   MemorySelection? memorySelection;
 
   if (inputs.memoryEnabled && inputs.memoryEntries.isNotEmpty) {
+    final validEntries = inputs.memoryEntries
+        .where(
+          (entry) =>
+              MemoryEntryRevisions.isUsable(entry) &&
+              entry.sourceManifest?.invalidated != true,
+        )
+        .toList();
     final visibleHistory = inputs.history
         .where((m) => !m.isHidden && !m.isTyping)
         .toList();
@@ -420,7 +425,7 @@ PromptResult _buildFromInputs(PromptInputs inputs) {
         .join('\n')
         .toLowerCase();
     final keywordMatched = <String, List<String>>{};
-    for (final entry in inputs.memoryEntries) {
+    for (final entry in validEntries) {
       if (entry.status != 'active' || entry.content.trim().isEmpty) continue;
       final matched = <String>{};
       for (final key in entry.keys) {
@@ -453,7 +458,7 @@ PromptResult _buildFromInputs(PromptInputs inputs) {
     memorySelection = MemorySelector.select(
       MemorySelectionInput(
         selectionMode: retrievalMode.isLegacy ? 'legacy' : 'v2',
-        entries: inputs.memoryEntries,
+        entries: validEntries,
         keywordMatchedTerms: keywordMatched,
         maxInjectionTokens: budget,
         maxInjectedEntries: inputs.memoryMaxInjected,
@@ -468,37 +473,25 @@ PromptResult _buildFromInputs(PromptInputs inputs) {
         chunkBudgeting: inputs.memoryPackingMode == 'chunk_first',
       ),
     );
-    final useExcerptPacking =
-        inputs.memoryExcerptingEnabled ||
-        inputs.memoryPackingMode == 'chunk_first';
-    final excerptSelection = useExcerptPacking
-        ? MemoryExcerptSelector.select(
-            memorySelection,
-            packingMode: inputs.memoryPackingMode,
-            maxExcerptTokensPerEntry: inputs.memoryExcerptTokensPerChunk,
-            maxExcerptChunksPerEntry: inputs.memoryExcerptChunksPerEntry,
-            chunkFirstTopEntries: inputs.chunkFirstTopEntries,
-            chunkFirstTopChunks: inputs.chunkFirstTopChunks,
-          )
-        : MemoryExcerptSelector.fullEntries(memorySelection);
+    final resolved = const MemoryContextResolver().resolve(
+      selection: memorySelection,
+      visibleMessageIds: const {},
+      disableSourceWindowExclusion: false,
+      excerptingEnabled: inputs.memoryExcerptingEnabled,
+      packingMode: inputs.memoryPackingMode,
+      excerptTokensPerChunk: inputs.memoryExcerptTokensPerChunk,
+      excerptChunksPerEntry: inputs.memoryExcerptChunksPerEntry,
+      chunkFirstTopEntries: inputs.chunkFirstTopEntries,
+      chunkFirstTopChunks: inputs.chunkFirstTopChunks,
+      summaryExcerpt: inputs.summaryContent,
+    );
+    final excerptSelection = resolved.excerptSelection;
 
     final topEntries = excerptSelection.entries;
 
     if (excerptSelection.items.isNotEmpty) {
-      final macroContent = formatMemoryItems(
-        excerptSelection.items,
-        includeContextHeader: false,
-      );
-      final contentParts = <String>[];
-      if (inputs.summaryContent != null && inputs.summaryContent!.isNotEmpty) {
-        contentParts.add('Summary excerpt:\n${inputs.summaryContent}');
-      }
-      contentParts.add(
-        formatMemoryItems(excerptSelection.items, includeContextHeader: true),
-      );
-
-      memoryContent = contentParts.join('\n\n');
-      memoryMacroContent = macroContent;
+      memoryContent = resolved.content!.hardBlockContent;
+      memoryMacroContent = resolved.content!.macroContent;
       triggeredMemories = topEntries
           .map(
             (e) => TriggeredEntry(

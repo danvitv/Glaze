@@ -46,7 +46,8 @@ class MemoryEntryCard extends StatelessWidget {
     this.showStatus = false,
   });
 
-  bool get _isActive => entry.status == 'active';
+  bool get _isActive =>
+      entry.status == 'active' && entry.sourceManifest?.invalidated != true;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +82,7 @@ class MemoryEntryCard extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               ?_buildIndexIcon(),
+              const SizedBox(width: 6),
               if (!_isActive) ...[
                 const SizedBox(width: 6),
                 MemoryStatusIcon(

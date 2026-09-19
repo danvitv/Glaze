@@ -8,6 +8,7 @@ import '../db/repositories/memory_salience_repo.dart';
 import '../db/repositories/memory_entity_repo.dart';
 import '../models/chat_message.dart';
 import '../models/memory_book.dart';
+import '../models/memory_entry_revisions.dart';
 import '../models/memory_graph.dart';
 import '../state/db_provider.dart';
 import '../state/memory_settings_provider.dart';
@@ -17,8 +18,7 @@ import 'chat_message_embedding_service.dart';
 import 'memory_budget.dart';
 import 'memory_diagnostics.dart';
 import 'memory_embedding_service.dart';
-import 'memory_excerpt_selector.dart';
-import 'memory_formatting.dart';
+import 'prompt/memory_context_resolver.dart';
 import 'memory_retrieval_mode.dart';
 import 'message_recall_service.dart';
 import 'memory_selector.dart';
@@ -132,6 +132,7 @@ class MemoryInjectionService {
     CancelToken? cancelToken,
     int? contextBudgetTokens,
     Set<String> visibleMessageIds = const {},
+    Set<String>? allowedSourceMessageIds,
   }) async {
     final sw = Stopwatch()..start();
     MemoryCandidateBuildResult finish(
@@ -185,8 +186,13 @@ class MemoryInjectionService {
         .where(
           (e) =>
               e.status == 'active' &&
+              MemoryEntryRevisions.isUsable(e) &&
               e.content.trim().isNotEmpty &&
-              e.source != 'studio_ledger',
+              e.source != 'studio_ledger' &&
+              e.sourceManifest?.invalidated != true &&
+              (allowedSourceMessageIds == null ||
+                  (e.messageIds.isNotEmpty &&
+                      e.messageIds.every(allowedSourceMessageIds.contains))),
         )
         .toList();
     if (activeEntries.isEmpty) return finish(const MemorySelection());
@@ -365,33 +371,21 @@ class MemoryInjectionService {
       );
     }
 
-    final useExcerptPacking =
-        settings.memoryExcerptingEnabled ||
-        settings.memoryPackingMode == 'chunk_first';
-    final excerptSelection = useExcerptPacking
-        ? MemoryExcerptSelector.select(
-            selection,
-            packingMode: settings.memoryPackingMode,
-            maxExcerptTokensPerEntry: settings.memoryExcerptTokensPerChunk,
-            maxExcerptChunksPerEntry: settings.memoryExcerptChunksPerEntry,
-            chunkFirstTopEntries: settings.chunkFirstTopEntries,
-            chunkFirstTopChunks: settings.chunkFirstTopChunks,
-          )
-        : MemoryExcerptSelector.fullEntries(selection);
+    final resolved = const MemoryContextResolver().resolve(
+      selection: selection,
+      visibleMessageIds: const {},
+      disableSourceWindowExclusion: false,
+      excerptingEnabled: settings.memoryExcerptingEnabled,
+      packingMode: settings.memoryPackingMode,
+      excerptTokensPerChunk: settings.memoryExcerptTokensPerChunk,
+      excerptChunksPerEntry: settings.memoryExcerptChunksPerEntry,
+      chunkFirstTopEntries: settings.chunkFirstTopEntries,
+      chunkFirstTopChunks: settings.chunkFirstTopChunks,
+      summaryExcerpt: summaryExcerpt,
+    );
+    final excerptSelection = resolved.excerptSelection;
     final maxInjectionTokens = selection.budgetTokens;
     final totalTokens = excerptSelection.totalTokens;
-    final macroContent = formatMemoryItems(
-      excerptSelection.items,
-      includeContextHeader: false,
-    );
-
-    final contentParts = <String>[];
-    if (summaryExcerpt != null && summaryExcerpt.isNotEmpty) {
-      contentParts.add('Summary excerpt:\n$summaryExcerpt');
-    }
-    contentParts.add(
-      formatMemoryItems(excerptSelection.items, includeContextHeader: true),
-    );
 
     final injectionTarget = settings.injectionTarget == 'macro'
         ? 'macro'
@@ -399,9 +393,9 @@ class MemoryInjectionService {
 
     return MemoryInjectionResult(
       entries: excerptSelection.entries,
-      content: contentParts.join('\n\n'),
+      content: resolved.content?.hardBlockContent ?? '',
       injectionTarget: injectionTarget,
-      macroContent: macroContent,
+      macroContent: resolved.content?.macroContent ?? '',
       totalTokens: totalTokens,
       maxInjectionTokens: maxInjectionTokens,
       budgetTrimmed: excerptSelection.budgetTrimmed,
